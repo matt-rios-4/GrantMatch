@@ -1,0 +1,182 @@
+# ============================================================
+# PSet 2 - Infraestructura local
+#   Kestra (orquestacion) + Postgres (backend de Kestra)
+#   dbt Core (Silver/Gold)  +  Spark master/worker (OBT)
+# Snowflake es externo (SaaS): se configura en .env
+#
+# Responsables de seccion (para no pisarse):
+#   [ROL 1]  servicios postgres + kestra
+#   [ROL 2]  servicio dbt
+#   [ROL 3]  servicios spark-master + spark-worker
+# ============================================================
+
+name: pset2
+
+x-snowflake-env: &snowflake-env
+  SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+  SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+  SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+  SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE:-PSET2_ROLE}
+  SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-PSET2_WH}
+  SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-PSET2_DB}
+  SNOWFLAKE_SCHEMA_BRONZE: ${SNOWFLAKE_SCHEMA_BRONZE:-BRONZE}
+  SNOWFLAKE_SCHEMA_SILVER: ${SNOWFLAKE_SCHEMA_SILVER:-SILVER}
+  SNOWFLAKE_SCHEMA_GOLD: ${SNOWFLAKE_SCHEMA_GOLD:-GOLD}
+  SNOWFLAKE_SCHEMA_OBT: ${SNOWFLAKE_SCHEMA_OBT:-OBT}
+
+services:
+  # ----------------------------------------------------------
+  # [ROL 1] Backend de Kestra
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: pset2-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: ${KESTRA_DB_USER:-kestra}
+      POSTGRES_PASSWORD: ${KESTRA_DB_PASSWORD:-kestra_local_pw}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d kestra -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [pset2_net]
+
+  # ----------------------------------------------------------
+  # [ROL 1] Kestra (UI en http://localhost:8080)
+  #  - Los flows de ./kestra/flows se sincronizan solos (micronaut.io.watch)
+  #  - Variables de entorno ENV_XXX  ->  {{ envs.xxx }} dentro de los flows
+  # ----------------------------------------------------------
+  kestra:
+    image: kestra/kestra:latest
+    container_name: pset2-kestra
+    pull_policy: always
+    user: "root"
+    restart: unless-stopped
+    command: server standalone
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"   # UI / API
+      - "8081:8081"   # management / health
+    volumes:
+      - ./kestra/flows:/app/flows                 # <- editar flows desde tu PC
+      - ./dbt:/app/dbt                            # <- dbt visible para Kestra
+      - ./spark:/app/spark                        # <- spark visible para Kestra
+      - kestra_data:/app/storage
+      - kestra_wd:/tmp/kestra-wd
+      - /var/run/docker.sock:/var/run/docker.sock # task runner Docker (dbt/spark desde Kestra)
+    environment:
+      # --- variables accesibles en flows como {{ envs.snowflake_user }}, etc. ---
+      ENV_SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+      ENV_SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+      ENV_SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
+      ENV_SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE:-PSET2_ROLE}
+      ENV_SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-PSET2_WH}
+      ENV_SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-PSET2_DB}
+      ENV_SNOWFLAKE_SCHEMA_BRONZE: ${SNOWFLAKE_SCHEMA_BRONZE:-BRONZE}
+      ENV_OPENALEX_S3_BASE: ${OPENALEX_S3_BASE:-s3://openalex/data/parquet}
+      ENV_AWS_REGION: ${AWS_REGION:-us-east-1}
+      ENV_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      ENV_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: ${KESTRA_DB_USER:-kestra}
+            password: ${KESTRA_DB_PASSWORD:-kestra_local_pw}
+        kestra:
+          server:
+            basicAuth:
+              username: ${KESTRA_USER:-admin@pset2.local}
+              password: ${KESTRA_PASSWORD:-Pset2Local1234}
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              basePath: /app/storage
+          queue:
+            type: postgres
+          tasks:
+            tmpDir:
+              path: /tmp/kestra-wd/tmp
+          url: http://localhost:8080/
+        micronaut:
+          io:
+            watch:
+              enabled: true
+              paths:
+                - /app/flows
+    networks: [pset2_net]
+
+  # ----------------------------------------------------------
+  # [ROL 2] dbt Core (contenedor "de trabajo": se queda vivo y
+  #  se ejecuta con  docker compose exec dbt dbt <comando>)
+  # ----------------------------------------------------------
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-snowflake:1.9.latest
+    container_name: pset2-dbt
+    entrypoint: ["tail", "-f", "/dev/null"]
+    working_dir: /usr/app/dbt
+    volumes:
+      - ./dbt:/usr/app/dbt                        # <- editar modelos desde tu PC
+    environment:
+      <<: *snowflake-env
+      DBT_PROFILES_DIR: /usr/app/dbt
+      DBT_TARGET: ${DBT_TARGET:-dev}
+      DBT_THREADS: ${DBT_THREADS:-4}
+    networks: [pset2_net]
+
+  # ----------------------------------------------------------
+  # [ROL 3] Spark standalone (UI master: http://localhost:8090)
+  #  Correr jobs:
+  #   docker compose exec spark-master /opt/spark/bin/spark-submit \
+  #     --master spark://spark-master:7077 \
+  #     --packages net.snowflake:spark-snowflake_2.12:3.1.1 \
+  #     --conf spark.jars.ivy=/tmp/.ivy2 /opt/spark-apps/jobs/<job>.py
+  # ----------------------------------------------------------
+  spark-master:
+    image: apache/spark:3.5.3-python3
+    container_name: pset2-spark-master
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host spark-master --port 7077 --webui-port 8080
+    ports:
+      - "8090:8080"   # Spark Master UI
+      - "7077:7077"
+    volumes:
+      - ./spark:/opt/spark-apps                   # <- editar jobs desde tu PC
+    environment:
+      <<: *snowflake-env
+    networks: [pset2_net]
+
+  spark-worker:
+    image: apache/spark:3.5.3-python3
+    container_name: pset2-spark-worker
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --webui-port 8081
+    depends_on: [spark-master]
+    ports:
+      - "8091:8081"   # Spark Worker UI
+    volumes:
+      - ./spark:/opt/spark-apps
+    environment:
+      <<: *snowflake-env
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+    networks: [pset2_net]
+
+volumes:
+  postgres_data:
+  kestra_data:
+  kestra_wd:
+
+networks:
+  pset2_net:
+    name: pset2_net
+    driver: bridge

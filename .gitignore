@@ -1,0 +1,141 @@
+# ============================================================
+# SECRETOS Y CREDENCIALES  (NUNCA subir)
+# ============================================================
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+secrets/
+**/secrets/
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.crt
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+credentials*
+!credentials*.example
+service-account*.json
+*-credentials.json
+.aws/
+.snowsql/
+snowsql.config
+config.toml
+connections.toml
+profiles.yml.local
+**/profiles.local.yml
+.dbt/
+.kestra-secrets
+*.secret
+*.secrets
+token*.txt
+*_token
+*.token
+
+# ============================================================
+# DATOS PESADOS / LOCALES
+# ============================================================
+data/
+**/data/
+datasets/
+raw/
+*.parquet
+*.csv
+*.tsv
+*.json.gz
+*.jsonl
+*.jsonl.gz
+*.gz
+*.zip
+*.tar
+*.tgz
+*.7z
+*.avro
+*.orc
+*.arrow
+*.feather
+*.sqlite
+*.db
+*.duckdb
+*.dump
+*.bak
+!**/dbt/seeds/*.csv
+spark-warehouse/
+metastore_db/
+derby.log
+checkpoint/
+checkpoints/
+
+# ============================================================
+# DOCKER / KESTRA / SPARK (volumenes y estado local)
+# ============================================================
+.docker/
+docker-data/
+postgres-data/
+kestra-data/
+kestra-wd/
+kestra-storage/
+storage/
+**/spark-events/
+.ivy2/
+.m2/
+
+# ============================================================
+# DBT
+# ============================================================
+dbt/target/
+dbt/dbt_packages/
+dbt/dbt_modules/
+dbt/logs/
+dbt/.user.yml
+target/
+dbt_packages/
+logs/
+*.log
+
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ============================================================
+# JAVA / SCALA
+# ============================================================
+*.class
+*.jar
+target/
+.bsp/
+.bloop/
+.metals/
+
+# ============================================================
+# IDE / SO
+# ============================================================
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ============================================================
+# ENTREGABLES BINARIOS GRANDES (el memo final se sube aparte si pesa)
+# ============================================================
+# *.pdf   <- descomenta si NO quieren versionar PDFs

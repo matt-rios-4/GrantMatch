@@ -1,0 +1,13 @@
+# Flow de prueba: confirma que Kestra llega a Snowflake con las credenciales del .env.
+# [ROL 1] Los flows reales (ingesta COPY INTO, trigger, retries, backfill) van en esta carpeta.
+id: smoke_test_snowflake
+namespace: pset2
+
+tasks:
+  - id: select_version
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: "SELECT CURRENT_VERSION() AS version, CURRENT_DATABASE() AS db"
+    fetchType: FETCH_ONE

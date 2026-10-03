@@ -1,0 +1,10 @@
+# [ROL 2] Declaren aqui las tablas Bronze cargadas por Kestra (COPY INTO) y usenlas con source().
+# Ejemplo (ajusten nombres al contrato de docs/ROLES.md):
+version: 2
+sources:
+  - name: bronze
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'PSET2_DB') }}"
+    schema: BRONZE
+    tables: []
+    #  - name: raw_openalex_works
+    #  - name: raw_nsf_awards
