@@ -1,24 +1,43 @@
-# Esqueleto inicial. [ROL 2] es dueno de este archivo: ajustenlo libremente.
+# [ROL 2] Proyecto dbt de "Subvenciones con Ruta".
+# Bronze (Kestra, COPY INTO) -> Silver (limpieza) -> Gold (star schema) -> Spark (OBT)
 name: pset2
 version: "1.0.0"
 config-version: 2
 profile: pset2
 
 model-paths: ["models"]
+analysis-paths: ["analyses"]
 test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+vars:
+  # Rango de dim_date. Las fechas de awards/works fuera de este rango van a la fila "desconocida" (-1).
+  dim_date_start: "1950-01-01"
+  dim_date_end: "2035-12-31"
+  # Años de publicación aceptados como válidos en slv_works.
+  min_publication_year: 1500
+
 models:
   pset2:
-    # Eventos historicos estaticos -> incremental + append (insert only), sin escaneos completos.
+    # models/bronze/ solo declara las fuentes con source(): Bronze lo carga Kestra con COPY INTO
+    # y dbt nunca escribe en ese esquema.
     silver:
-      +schema: SILVER
+      +schema: silver
+      # Por defecto: eventos inmutables -> incremental + append (insert only, sin escaneos completos).
+      # Los modelos *_history son los eventos (una fila por versión de cada registro).
+      # Los modelos de "estado actual" sobrescriben la estrategia en su config() y lo justifican.
       +materialized: incremental
       +incremental_strategy: append
+      +on_schema_change: append_new_columns
     gold:
-      +schema: GOLD
+      +schema: gold
       +materialized: incremental
       +incremental_strategy: append
+      +on_schema_change: append_new_columns
+
+tests:
+  pset2:
+    +store_failures: false
