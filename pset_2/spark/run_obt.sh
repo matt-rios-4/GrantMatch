@@ -2,7 +2,8 @@
 # [ROL 3] Ejecuta el job de la OBT contra el cluster Spark del docker-compose.
 #   Manual:  docker compose exec spark-master /opt/spark-apps/run_obt.sh
 #   Kestra:  docker exec pset2-spark-master /opt/spark-apps/run_obt.sh   (ver spark/README.md)
-# Sale con código 1 si alguna validación de grain falla (y en ese caso no escribe la OBT).
+# Sale con código 1 si algo falla (y en ese caso no escribe la OBT).
+# Las dos confs de redacción ocultan la llave RSA y el password en la UI y los logs de Spark.
 set -euo pipefail
 
 exec /opt/spark/bin/spark-submit \
@@ -10,6 +11,8 @@ exec /opt/spark/bin/spark-submit \
   --packages net.snowflake:spark-snowflake_2.12:3.1.1 \
   --conf spark.jars.ivy=/opt/ivy \
   --conf spark.sql.session.timeZone=UTC \
+  --conf "spark.redaction.regex=(?i)secret|password|token|access[.]key|private_key|pem" \
+  --conf "spark.sql.redaction.options.regex=(?i)url|password|private_key|pem" \
   --driver-memory "${SPARK_DRIVER_MEMORY:-1g}" \
   --executor-memory "${SPARK_EXECUTOR_MEMORY:-1g}" \
   /opt/spark-apps/jobs/build_obt.py "$@"

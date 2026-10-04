@@ -74,13 +74,9 @@ El código vive en `dbt/` (montado como volumen: se edita desde tu PC, sin recon
 
 ### Spark (One Big Table)
 ```bash
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  --packages net.snowflake:spark-snowflake_2.12:3.1.1 \
-  --conf spark.jars.ivy=/tmp/.ivy2 \
-  /opt/spark-apps/jobs/00_test_snowflake_connection.py
+docker compose exec spark-master /opt/spark-apps/run_obt.sh
 ```
-Cambia el último argumento por el job real (`/opt/spark-apps/jobs/<tu_job>.py`). La primera ejecución descarga el conector (~1 min).
+Lee el star schema de `GOLD`, construye `OBT.OBT_AWARD_WORK`, valida el grain y la escribe en Snowflake. La primera ejecución descarga el conector (~1 min). Detalle, pruebas locales y autenticación con llave RSA en [spark/README.md](spark/README.md).
 
 ### Pipeline completo
 Kestra carga Bronze → `dbt build` (Silver, Gold) → job Spark (OBT en el esquema `OBT`). Orden y nombres de tablas: [docs/ROLES.md](docs/ROLES.md#contrato-de-interfaces).

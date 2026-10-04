@@ -1,23 +1,22 @@
-"""Smoke test: verifica que Spark puede leer de Snowflake. [ROL 3] reemplazar por los jobs reales."""
+"""Smoke test: verifica que Spark llega a Snowflake con las credenciales del .env.
+
+Usa las mismas opciones de conexión que build_obt.py (password o llave RSA):
+    docker compose exec spark-master /opt/spark-apps/run_obt.sh   # job real
+    docker compose exec spark-master /opt/spark/bin/spark-submit \\
+        --packages net.snowflake:spark-snowflake_2.12:3.1.1 --conf spark.jars.ivy=/opt/ivy \\
+        /opt/spark-apps/jobs/00_test_snowflake_connection.py
+"""
 import os
+
 from pyspark.sql import SparkSession
 
+from build_obt import SNOWFLAKE_SOURCE, snowflake_options
+
 spark = SparkSession.builder.appName("pset2-smoke-test").getOrCreate()
-
-sf_options = {
-    "sfURL": f"{os.environ['SNOWFLAKE_ACCOUNT']}.snowflakecomputing.com",
-    "sfUser": os.environ["SNOWFLAKE_USER"],
-    "sfPassword": os.environ["SNOWFLAKE_PASSWORD"],
-    "sfRole": os.environ["SNOWFLAKE_ROLE"],
-    "sfWarehouse": os.environ["SNOWFLAKE_WAREHOUSE"],
-    "sfDatabase": os.environ["SNOWFLAKE_DATABASE"],
-    "sfSchema": os.environ.get("SNOWFLAKE_SCHEMA_GOLD", "GOLD"),
-}
-
 df = (
-    spark.read.format("net.snowflake.spark.snowflake")
-    .options(**sf_options)
-    .option("query", "SELECT CURRENT_VERSION() AS version, CURRENT_DATABASE() AS db")
+    spark.read.format(SNOWFLAKE_SOURCE)
+    .options(**snowflake_options(os.environ.get("SNOWFLAKE_SCHEMA_GOLD", "GOLD")))
+    .option("query", "SELECT CURRENT_VERSION() AS version, CURRENT_DATABASE() AS db, CURRENT_ROLE() AS rol")
     .load()
 )
 df.show(truncate=False)

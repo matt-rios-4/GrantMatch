@@ -4,11 +4,17 @@ DataFrames sintéticos y se comprueba que las validaciones de grain hagan su tra
 
     docker compose run --rm --no-deps spark-master /opt/spark/bin/spark-submit \
         --master "local[2]" /opt/spark-apps/tests/test_build_obt.py
+
+Limitación conocida: FakeGold no ejecuta los filtros `where` (*_IN_SCOPE), que corren en
+Snowflake; esos se validan en la corrida real, donde un filtro equivocado aparece como
+huérfano y aborta el job.
 """
 
+import os
 import sys
+import tempfile
 
-sys.path.insert(0, "/opt/spark-apps/jobs")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jobs"))
 
 from pyspark.sql import SparkSession  # noqa: E402
 
@@ -21,23 +27,26 @@ spark.sparkContext.setLogLevel("ERROR")
 def gold_tables(overrides=None):
     t = {
         "FACT_AWARD_WORKS": [
-            ("G1", "W1", "F1", "T1", 20240115),
-            ("G1", "W2", "F1", "T2", 20240301),
-            ("G2", "W1", "F2", "T1", 20240115),  # W1 financiado por dos awards
+            # funder_key aquí es una copia vieja a propósito: la OBT debe usar la de FACT_AWARDS.
+            ("G1", "W1", "UNKNOWN", "T1", 20240115),
+            ("G1", "W2", "UNKNOWN", "T2", 20240301),
+            ("G2", "W1", "F2", "T1", 20240115),   # W1 financiado por dos awards
+            ("G2", "W3", "F2", "T2", 20240301),   # W3 no tiene autorías con ID
         ],
         "FACT_AWARDS": [
-            ("G1", "T1", "I1", 20230101, 20251231, 500000.0, "USD", 500000.0, 1095, 2, 1, False, False),
-            ("G2", "UNKNOWN", "UNKNOWN", -1, -1, None, None, None, None, 1, 0, False, False),
+            ("G1", "F1", "T1", "I1", 20230101, 20251231, 500000.0, "USD", 500000.0, 1095, 2, 1, False, False),
+            ("G2", "F2", "UNKNOWN", "UNKNOWN", -1, -1, None, None, None, None, 2, 0, False, False),
         ],
         "DIM_AWARD": [
-            ("G1", "NSF-123", "Deep learning for climate", "<p>Climate</p> models", True, "CAREER", "grant"),
-            ("G2", None, "Small grant", None, False, None, None),
+            ("G1", "NSF-123", "Can AI predict floods?", "Climate models", True, "CAREER", "grant"),
+            ("G2", None, None, None, False, None, None),
         ],
         "DIM_FUNDER": [("F1", "NSF", "US", False), ("F2", "ANID", "CL", True), ("UNKNOWN", "Desconocido", None, None)],
         "DIM_INSTITUTION": [("I1", "MIT", "US", "education"), ("UNKNOWN", "Institución desconocida", None, None)],
         "DIM_WORK": [
-            ("W1", "10.1/x", "Paper uno", "Abstract uno", True, 2024, "article", "en", 10, 1.2, False, 3),
+            ("W1", "10.1/x", "Policy in the U.S.", "Abstract uno", True, 2024, "article", "en", 10, 1.2, False, 3),
             ("W2", None, "Paper dos", None, False, 2024, "article", "en", 0, None, False, 1),
+            ("W3", None, "Paper tres", "Abstract tres", True, 2024, "article", "en", 0, None, False, 0),
         ],
         "DIM_TOPIC": [
             ("T1", "Climate ML", "AI", "CS", "Physical"), ("T2", "Ecology", "Bio", "Life", "Life"),
@@ -47,9 +56,10 @@ def gold_tables(overrides=None):
                      (20251231, None, 2025, 2026), (-1, None, None, None)],
         "BRG_WORK_AUTHOR": [
             ("W1", "A1", "first", True, "US"), ("W1", "A2", "middle", False, "CL"), ("W1", "A3", "last", False, "US"),
-            ("W2", "A2", "first", True, "CL"),
+            # W2 tiene dos autorías marcadas "first" (dato real posible en OpenAlex)
+            ("W2", "A2", "first", True, "CL"), ("W2", "A9", "first", False, "AR"),
         ],
-        "DIM_AUTHOR": [("A1", "Ana"), ("A2", "Beto"), ("A3", "Caro")],
+        "DIM_AUTHOR": [("A1", "Ana"), ("A2", "Zoe"), ("A3", "Caro"), ("A9", "Beto")],
     }
     t.update(overrides or {})
     return t
@@ -57,9 +67,10 @@ def gold_tables(overrides=None):
 
 SCHEMAS = {
     "FACT_AWARD_WORKS": "award_key string, work_key string, funder_key string, topic_key string, publication_date_key int",
-    "FACT_AWARDS": "award_key string, topic_key string, institution_key string, start_date_key int, end_date_key int, "
-                   "amount double, currency string, amount_usd double, duration_days int, funded_outputs_count int, "
-                   "institutions_count int, is_amount_invalid boolean, has_inconsistent_dates boolean",
+    "FACT_AWARDS": "award_key string, funder_key string, topic_key string, institution_key string, "
+                   "start_date_key int, end_date_key int, amount double, currency string, amount_usd double, "
+                   "duration_days int, funded_outputs_count int, institutions_count int, "
+                   "is_amount_invalid boolean, has_inconsistent_dates boolean",
     "DIM_AWARD": "award_key string, funder_award_id string, award_title string, award_description string, "
                  "has_description boolean, funder_scheme string, funding_type string",
     "DIM_FUNDER": "funder_key string, funder_name string, country_code string, is_global_south boolean",
@@ -75,14 +86,16 @@ SCHEMAS = {
 }
 
 
-class FakeGold:
-    def __init__(self, tables):
+class FakeGold(build_obt.Gold):
+    """Gold sin Snowflake: mismas columnas y persistencia, datos sintéticos."""
+
+    def __init__(self, tables):  # noqa: super().__init__ pediría credenciales
         self.tables = tables
+        self._persisted = []
 
     def table(self, name, *columns, where=None):
-        # El filtro `where` corre en Snowflake; aquí no hace falta porque los datos ya son el subconjunto.
         df = spark.createDataFrame(self.tables[name], SCHEMAS[name])
-        return df.select(*columns) if columns else df
+        return self.persist(df.select(*columns) if columns else df)
 
 
 def run(overrides=None):
@@ -101,42 +114,72 @@ def check(name, condition):
         failures.append(name)
 
 
-# 1) Caso feliz: el grain se conserva aunque W1 tenga 3 autores y 2 awards.
-obt, metrics = run()
-rows = {(r.award_key, r.work_key): r for r in obt.collect()}
-check("conteo OBT = conteo hecho (3)", metrics["obt_rows"] == 3 == metrics["base_rows"])
-check("autores agregados, no multiplicados", rows[("G1", "W1")].linked_authors_count == 3)
-check("first_author correcto", rows[("G1", "W1")].first_author_name == "Ana")
-check("países distintos ordenados", rows[("G1", "W1")].author_country_codes == ["CL", "US"])
-check("miembro UNKNOWN resuelve sin huérfanos", rows[("G2", "W1")].funder_name == "ANID"
-      and rows[("G2", "W1")].lead_institution_name == "Institución desconocida")
-check("award_text concatena título y descripción", rows[("G1", "W1")].award_text.startswith("Deep learning"))
-check("label = 1", all(r.label == 1 for r in rows.values()))
+try:
+    # 1) Caso feliz: el grain se conserva aunque W1 tenga 3 autores y 2 awards.
+    obt, metrics = run()
+    rows = {(r.award_key, r.work_key): r for r in obt.collect()}
+    check("conteo OBT = conteo hecho (4)", metrics["obt_rows"] == 4 == metrics["base_rows"])
+    check("autores agregados, no multiplicados", rows[("G1", "W1")].linked_authors_count == 3)
+    check("first_author correcto", rows[("G1", "W1")].first_author_name == "Ana")
+    w2 = rows[("G1", "W2")]
+    check("dos 'first': key y nombre del MISMO autor",
+          (w2.first_author_key, w2.first_author_name) == ("A9", "Beto"))
+    check("países distintos ordenados", rows[("G1", "W1")].author_country_codes == ["CL", "US"])
+    w3 = rows[("G2", "W3")]
+    check("work sin autores: listas vacías y conteo 0",
+          w3.author_keys == [] and w3.linked_authors_count == 0 and w3.first_author_key is None)
+    check("funder vigente de FACT_AWARDS, no la copia de FACT_AWARD_WORKS",
+          rows[("G1", "W1")].funder_name == "NSF")
+    check("miembro UNKNOWN resuelve sin huérfanos",
+          rows[("G2", "W1")].lead_institution_name == "Institución desconocida")
+    check("título con '?' no duplica separador",
+          rows[("G1", "W1")].award_text == "Can AI predict floods? Climate models")
+    check("título con 'U.S.' conserva el punto",
+          rows[("G1", "W1")].work_text == "Policy in the U.S. Abstract uno")
+    check("título sin cuerpo -> solo título", rows[("G1", "W2")].work_text == "Paper dos")
+    check("award sin título ni descripción -> NULL, no ''", rows[("G2", "W1")].award_text is None)
+    check("label = 1", all(r.label == 1 for r in rows.values()))
 
+    def expect_failure(name, overrides, fragment):
+        try:
+            run(overrides)
+            check(name, False)
+        except build_obt.ValidationError as exc:
+            check(f"{name} -> '{exc}'", fragment in str(exc))
 
-def expect_failure(name, overrides, fragment):
+    # 2) Tabla con llave repetida: el job debe abortar ANTES de duplicar filas.
+    expect_failure("dim_funder duplicada aborta",
+                   {"DIM_FUNDER": gold_tables()["DIM_FUNDER"] + [("F1", "NSF (copia)", "US", False)]},
+                   "dim_funder")
+    expect_failure("dim_author duplicada aborta",
+                   {"DIM_AUTHOR": gold_tables()["DIM_AUTHOR"] + [("A1", "Ana bis")]},
+                   "dim_author")
+
+    # 3) FK sin dimensión: el job debe abortar en vez de dejar atributos nulos.
+    expect_failure("FK huérfana aborta",
+                   {"DIM_WORK": [r for r in gold_tables()["DIM_WORK"] if r[0] != "W2"]},
+                   "dim_work")
+    expect_failure("autoría con autor inexistente aborta",
+                   {"DIM_AUTHOR": [r for r in gold_tables()["DIM_AUTHOR"] if r[0] != "A3"]},
+                   "dim_author")
+
+    # 4) Hecho base con pares repetidos.
+    expect_failure("hecho base duplicado aborta",
+                   {"FACT_AWARD_WORKS": gold_tables()["FACT_AWARD_WORKS"] + [("G1", "W1", "F1", "T1", 20240115)]},
+                   "repetidas")
+
+    # 5) Llave RSA cifrada: mensaje claro en vez de un error opaco del conector.
+    with tempfile.NamedTemporaryFile("w", suffix=".p8", delete=False) as fh:
+        fh.write("-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIabc\n-----END ENCRYPTED PRIVATE KEY-----\n")
     try:
-        run(overrides)
-        check(name, False)
-    except build_obt.ValidationError as exc:
-        check(f"{name} -> '{exc}'", fragment in str(exc))
+        build_obt._private_key_body(fh.name)
+        check("llave cifrada se rechaza", False)
+    except SystemExit as exc:
+        check("llave cifrada se rechaza con mensaje claro", "nocrypt" in str(exc))
+    finally:
+        os.unlink(fh.name)
+finally:
+    spark.stop()
 
-
-# 2) Dimensión con llave repetida: el job debe abortar ANTES de duplicar filas.
-expect_failure("dim_funder duplicada aborta",
-               {"DIM_FUNDER": gold_tables()["DIM_FUNDER"] + [("F1", "NSF (copia)", "US", False)]},
-               "dim_funder")
-
-# 3) FK sin dimensión: el job debe abortar en vez de dejar atributos nulos.
-expect_failure("FK huérfana aborta",
-               {"DIM_WORK": [r for r in gold_tables()["DIM_WORK"] if r[0] != "W2"]},
-               "dim_work")
-
-# 4) Hecho base con pares repetidos.
-expect_failure("hecho base duplicado aborta",
-               {"FACT_AWARD_WORKS": gold_tables()["FACT_AWARD_WORKS"] + [("G1", "W1", "F1", "T1", 20240115)]},
-               "repetidos")
-
-spark.stop()
 print(f"\n{'OK' if not failures else 'FALLARON'}: {len(failures)} fallas")
 sys.exit(1 if failures else 0)

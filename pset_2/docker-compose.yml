@@ -165,10 +165,8 @@ services:
       - "8091:8081"   # Spark Worker UI
     volumes:
       - ./spark:/opt/spark-apps
-      - ./secrets:/opt/secrets:ro
     environment:
       <<: *snowflake-env
-      SNOWFLAKE_PRIVATE_KEY_FILE: ${SNOWFLAKE_PRIVATE_KEY_FILE:-}
       SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
       SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
     networks: [pset2_net]

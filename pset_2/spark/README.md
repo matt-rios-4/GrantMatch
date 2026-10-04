@@ -28,16 +28,22 @@ docker compose run --rm --no-deps spark-master /opt/spark/bin/spark-submit \
   --master "local[2]" /opt/spark-apps/tests/test_build_obt.py
 ```
 
-Las pruebas usan datos sintéticos y comprueban dos cosas:
-- El grain se conserva aunque un work tenga varios autores y varios awards.
-- El job aborta si una dimensión trae llaves repetidas, si una FK no encuentra su dimensión o si el hecho base viene duplicado.
+Las 19 pruebas usan datos sintéticos y comprueban:
+- **Grain:** se conserva aunque un work tenga varios autores y varios awards, o ninguno.
+- **Valores correctos:** el funder vigente, el primer autor y los textos para el embedding (`?`, `U.S.`, vacíos).
+- **Abortos:** el job se detiene si una tabla trae llaves repetidas, si una FK o un autor no encuentra su dimensión, si el hecho base viene duplicado o si la llave RSA está cifrada.
+
+Los filtros `*_IN_SCOPE` corren en Snowflake y no se ejercitan aquí. En la corrida real, un filtro equivocado aparece como huérfano y aborta el job.
 
 ### Autenticación
 
 - **Por defecto:** `SNOWFLAKE_USER` + `SNOWFLAKE_PASSWORD`, como el resto del equipo.
 - **Llave RSA** (necesaria si la cuenta exige MFA para login con password):
-  1. Pon la llave en `pset_2/secrets/snowflake_rsa_key.p8`. Esa carpeta está en `.gitignore`.
-  2. Define `SNOWFLAKE_PRIVATE_KEY_FILE=/opt/secrets/snowflake_rsa_key.p8` en `.env`.
+  1. Genera la llave **sin passphrase** y en PKCS#8: `openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt -out snowflake_rsa_key.p8`. El job rechaza llaves cifradas con un mensaje claro.
+  2. Pon la llave en `pset_2/secrets/snowflake_rsa_key.p8`. Esa carpeta está en `.gitignore` y solo se monta en `spark-master`, donde corre el driver.
+  3. Define `SNOWFLAKE_PRIVATE_KEY_FILE=/opt/secrets/snowflake_rsa_key.p8` en `.env`.
+
+`run_obt.sh` configura `spark.redaction.regex` y `spark.sql.redaction.options.regex` para que ni la llave ni el password aparezcan en la UI ni en los logs de Spark.
 
 ## Cómo se construye
 
@@ -56,7 +62,13 @@ Las pruebas usan datos sintéticos y comprueban dos cosas:
 | 2 | Ningún join queda sin pareja (cada lado lleva un marcador que solo es nulo si no hubo match) | FKs sin dimensión que dejarían atributos vacíos en silencio |
 | 3 | `COUNT(OBT) = COUNT(FACT_AWARD_WORKS)` y `(award_key, work_key)` único | Que el aplanado agregue o pierda observaciones |
 
-Los conteos de cada corrida quedan en `OBT.OBT_AWARD_WORK_VALIDATION`: `status`, `base_rows`, `obt_rows` y `metrics_json`.
+Cada corrida, exitosa o fallida (incluidos errores de conexión o de columnas), deja una fila en `OBT.OBT_AWARD_WORK_VALIDATION`:
+- columnas `status`, `base_rows`, `obt_rows`, `orphans_total`, `error` y `metrics_json`;
+- un `-1` significa que ese chequeo no llegó a ejecutarse.
+
+Si la OBT se escribió bien pero falla solo este registro, el job termina en `OK` y deja un aviso en el log.
+
+**Consistencia:** cada tabla de `GOLD` se lee en una consulta separada. Por eso el job debe correr **después** de `dbt build` y no en paralelo, que es como lo encadena Kestra. Si dbt modificara Gold a mitad de la lectura, el chequeo de huérfanos lo detecta y el job aborta sin escribir.
 
 ## Re-ejecución
 
