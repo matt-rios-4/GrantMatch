@@ -1,0 +1,198 @@
+version: 2
+
+# Tests de Gold: todas las PK unique + not_null, todas las FK de los hechos con relationships
+# (severidad error: Gold solo admite referencias válidas; lo no resoluble va a 'UNKNOWN' / -1)
+# y reglas de negocio sobre las métricas.
+
+models:
+  # ---------------------------------------------------------------- dimensiones
+  - name: dim_date
+    description: "Calendario diario + fila -1 (desconocida). PK: date_key (YYYYMMDD)."
+    columns:
+      - name: date_key
+        data_tests: [not_null, unique]
+
+  - name: dim_funder
+    description: "Entidades financiadoras + 'UNKNOWN'. PK: funder_key (ID OpenAlex F...)."
+    columns:
+      - name: funder_key
+        data_tests: [not_null, unique]
+      - name: funder_name
+        data_tests: [not_null]
+
+  - name: dim_topic
+    description: "Temas con jerarquía domain > field > subfield > topic + 'UNKNOWN'. PK: topic_key."
+    columns:
+      - name: topic_key
+        data_tests: [not_null, unique]
+      - name: topic_name
+        data_tests: [not_null]
+
+  - name: dim_institution
+    description: "Instituciones que reciben awards + 'UNKNOWN'. PK: institution_key (I...)."
+    columns:
+      - name: institution_key
+        data_tests: [not_null, unique]
+
+  - name: dim_award
+    description: "Atributos descriptivos de cada award (incluye el texto a vectorizar). PK: award_key."
+    columns:
+      - name: award_key
+        data_tests: [not_null, unique]
+      - name: has_description
+        data_tests: [not_null]
+
+  - name: dim_work
+    description: "Publicaciones con abstract reconstruido. PK: work_key (W...)."
+    columns:
+      - name: work_key
+        data_tests: [not_null, unique]
+      - name: topic_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_topic')
+              field: topic_key
+      - name: publication_date_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+
+  - name: dim_author
+    description: "Investigadores. PK: author_key (A...)."
+    columns:
+      - name: author_key
+        data_tests: [not_null, unique]
+
+  - name: brg_work_author
+    description: "Puente work-autor. Grain: work_key + author_key."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [work_key, author_key]
+    columns:
+      - name: work_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_work')
+              field: work_key
+      - name: author_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_author')
+              field: author_key
+
+  # ---------------------------------------------------------------- hechos
+  - name: fact_awards
+    description: >
+      Hecho principal. GRAIN: una fila por award (ayuda otorgada), versión más reciente.
+    columns:
+      - name: award_key
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('dim_award')
+              field: award_key
+      - name: funder_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_funder')
+              field: funder_key
+      - name: topic_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_topic')
+              field: topic_key
+      - name: institution_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_institution')
+              field: institution_key
+      - name: start_date_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: end_date_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: amount
+        description: "Monto en moneda original; NULL si no se informó. No sumar entre monedas."
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: amount_usd
+        description: "Monto en USD (solo awards en USD). Es la métrica aditiva de dinero."
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: duration_days
+        description: "Días entre inicio y fin; NULL si falta alguna fecha."
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: funded_outputs_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: award_count
+        data_tests:
+          - accepted_values:
+              values: [1]
+              quote: false
+
+  - name: fact_award_works
+    description: >
+      Hecho sin métricas. GRAIN: una fila por publicación financiada por un award
+      (award_key + work_key). Verdad de terreno del recomendador.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [award_key, work_key]
+    columns:
+      - name: award_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('fact_awards')
+              field: award_key
+          - relationships:
+              to: ref('dim_award')
+              field: award_key
+      - name: work_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_work')
+              field: work_key
+      - name: funder_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_funder')
+              field: funder_key
+      - name: topic_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_topic')
+              field: topic_key
+      - name: publication_date_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key

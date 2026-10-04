@@ -1,0 +1,156 @@
+version: 2
+
+# Tests de Silver: llaves (not_null / unique), integridad entre tablas (relationships) y reglas
+# reales del negocio de financiamiento (montos positivos, fechas coherentes, años posibles).
+# severity: warn solo donde la carga parcial de Bronze hace esperable que falten referencias;
+# en Gold esas mismas relaciones son error.
+
+models:
+  - name: slv_awards_history
+    description: "Historial inmutable de awards. Grain: award_id + updated_at (una fila por versión)."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [award_id, updated_at]
+    columns:
+      - name: award_id
+        data_tests: [not_null]
+      - name: _loaded_at
+        data_tests: [not_null]
+
+  - name: slv_awards
+    description: "Estado actual de cada award, limpio y tipado. Grain: award_id."
+    columns:
+      - name: award_id
+        description: "ID corto de OpenAlex (G...)."
+        data_tests: [not_null, unique]
+      - name: amount
+        description: "Monto en la moneda original. NULL si no se informó o era <= 0."
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: amount_usd
+        description: "Monto solo cuando currency = USD. No se convierten monedas (ver limitaciones)."
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: currency
+        data_tests:
+          - dbt_utils.expression_is_true:
+              expression: "rlike '^[A-Z]{3}$'"
+              config:
+                where: "currency is not null"
+                severity: warn
+      - name: end_date
+        description: "NULL si era anterior a start_date (ver has_inconsistent_dates)."
+        data_tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= start_date"
+              config:
+                where: "end_date is not null and start_date is not null"
+      - name: funded_outputs_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: funder_id
+        data_tests:
+          - relationships:
+              to: ref('slv_funders')
+              field: funder_id
+              config:
+                severity: warn
+      - name: primary_topic_id
+        data_tests:
+          - relationships:
+              to: ref('slv_topics')
+              field: topic_id
+              config:
+                severity: warn
+
+  - name: slv_works_history
+    description: "Historial inmutable de works. Grain: work_id + updated_at."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [work_id, updated_at]
+    columns:
+      - name: work_id
+        data_tests: [not_null]
+
+  - name: slv_works
+    description: "Estado actual de cada work con el abstract reconstruido. Grain: work_id."
+    columns:
+      - name: work_id
+        data_tests: [not_null, unique]
+      - name: publication_year
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: "{{ var('min_publication_year') }}"
+              max_value: "year(current_date()) + 1"
+      - name: cited_by_count
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: is_retracted
+        data_tests: [not_null]
+
+  - name: slv_work_authorships
+    description: "Autores de cada work. Grain: work_id + author_id."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [work_id, author_id]
+    columns:
+      - name: work_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('slv_works')
+              field: work_id
+      - name: author_id
+        data_tests: [not_null]
+      - name: author_position
+        data_tests:
+          - accepted_values:
+              values: ['first', 'middle', 'last']
+
+  - name: slv_work_awards
+    description: "Enlace work financiado por award. Grain: work_id + award_id."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [work_id, award_id]
+    columns:
+      - name: work_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('slv_works')
+              field: work_id
+      - name: award_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('slv_awards')
+              field: award_id
+              config:
+                severity: warn
+
+  - name: slv_funders
+    description: "Catálogo de financiadores. Grain: funder_id."
+    columns:
+      - name: funder_id
+        data_tests: [not_null, unique]
+      - name: funder_name
+        data_tests: [not_null]
+
+  - name: slv_topics
+    description: "Catálogo de temas con su jerarquía. Grain: topic_id."
+    columns:
+      - name: topic_id
+        data_tests: [not_null, unique]
+      - name: subfield_id
+        data_tests: [not_null]
+      - name: field_id
+        data_tests: [not_null]
+      - name: domain_id
+        data_tests: [not_null]

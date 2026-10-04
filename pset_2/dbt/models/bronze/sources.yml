@@ -1,10 +1,44 @@
-# [ROL 2] Declaren aqui las tablas Bronze cargadas por Kestra (COPY INTO) y usenlas con source().
-# Ejemplo (ajusten nombres al contrato de docs/ROLES.md):
 version: 2
+
+# Contrato con [ROL 1] (Kestra): ver docs/CONTRATO_BRONZE.md.
+# Cada tabla Bronze guarda el registro original de OpenAlex completo en una columna VARIANT (raw),
+# tal como viene en el Parquet, más metadata de carga. dbt nunca escribe en Bronze.
+
 sources:
   - name: bronze
     database: "{{ env_var('SNOWFLAKE_DATABASE', 'PSET2_DB') }}"
     schema: BRONZE
-    tables: []
-    #  - name: raw_openalex_works
-    #  - name: raw_nsf_awards
+    description: >
+      Capa Bronze: Parquet de s3://openalex/data/parquet/ cargados por Kestra con COPY INTO,
+      sin transformar. Una fila = un registro de OpenAlex en un archivo de una partición updated_date.
+    # Propiedades de nivel superior: compatibles con la imagen dbt-snowflake 1.9 del docker-compose.
+    loaded_at_field: _loaded_at
+    freshness:
+      warn_after: {count: 35, period: day}
+    tables:
+      - name: raw_openalex_awards
+        description: "Ayudas/subvenciones (awards), incluidas las de NSF. ~17 M en el snapshot completo."
+        columns: &bronze_columns
+          - name: raw
+            description: "Registro original completo (objeto JSON del Parquet)."
+            data_tests: [not_null]
+          - name: _source_file
+            description: "Archivo de origen (METADATA$FILENAME); incluye la partición updated_date=YYYY-MM-DD."
+            data_tests: [not_null]
+          - name: _source_row_number
+            description: "Fila dentro del archivo (METADATA$FILE_ROW_NUMBER)."
+          - name: _loaded_at
+            description: "Momento de la carga a Bronze. Es la marca que usan los modelos incrementales."
+            data_tests: [not_null]
+
+      - name: raw_openalex_works
+        description: "Publicaciones (works). Se carga un subconjunto de particiones por costo."
+        columns: *bronze_columns
+
+      - name: raw_openalex_funders
+        description: "Entidades financiadoras (funders), ~30 mil."
+        columns: *bronze_columns
+
+      - name: raw_openalex_topics
+        description: "Taxonomía de temas (4.516 topics) con su jerarquía subfield > field > domain."
+        columns: *bronze_columns
