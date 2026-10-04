@@ -17,7 +17,8 @@
       Validez
         - amount <= 0 -> NULL y bandera is_amount_invalid (A06). Un monto cero o negativo no es un
           monto real; casi siempre significa "no informado". No se borra el award.
-        - end_date < start_date -> end_date = NULL y bandera has_inconsistent_dates (A08).
+        - end_date < start_date (exacta o derivada del año) -> end_date = NULL y bandera
+          has_inconsistent_dates (A08).
         - start_date ausente pero start_year presente -> 1 de enero de ese año, con bandera
           is_start_date_from_year, para no perder la dimensión de tiempo.
       Completitud
@@ -65,6 +66,10 @@ typed as (
 
         try_to_date(raw:start_date::varchar)                        as start_date_raw,
         try_cast(raw:start_year::varchar as integer)                as start_year,
+        -- Fecha de inicio final: la exacta o, si falta, el 1 de enero de start_year.
+        coalesce(start_date_raw,
+                 iff(start_year between 1900 and 2100, date_from_parts(start_year, 1, 1), null))
+                                                                    as start_date,
         try_to_date(raw:end_date::varchar)                          as end_date_raw,
         try_cast(raw:end_year::varchar as integer)                  as end_year,
 
@@ -108,15 +113,13 @@ cleaned as (
         currency,
         iff(currency = 'USD' and amount_raw > 0, amount_raw, null)  as amount_usd,
 
-        coalesce(
-            start_date_raw,
-            iff(start_year between 1900 and 2100, date_from_parts(start_year, 1, 1), null)
-        )                                                           as start_date,
+        start_date,
         coalesce(start_date_raw is null and start_year between 1900 and 2100, false)
                                                                     as is_start_date_from_year,
         start_year,
-        iff(end_date_raw < start_date_raw, null, end_date_raw)      as end_date,
-        coalesce(end_date_raw < start_date_raw, false)              as has_inconsistent_dates,
+        -- Contra la fecha de inicio final (exacta o derivada del año), no solo la exacta.
+        iff(end_date_raw < start_date, null, end_date_raw)          as end_date,
+        coalesce(end_date_raw < start_date, false)                  as has_inconsistent_dates,
         end_year,
 
         primary_topic_id,

@@ -1,6 +1,6 @@
 # Secciones 3 y 4 del memo (rol dbt)
 
-> **Antes de entregar:** los valores `‹A04›`, `‹W07›`, etc. salen de `dbt/analyses/data_quality_profile.sql`, corrido sobre los datos que cargó Kestra. Reemplaza cada marcador por el porcentaje y el conteo de la fila con ese ID (por ejemplo, "18,4 % (3.127.402 de 17.003.118)"). No dejes cifras inventadas.
+> **Origen de las cifras:** `dbt/analyses/data_quality_profile.sql`, corrido el 4-oct-2026 sobre la muestra cargada en Bronze: todos los awards de OpenAlex (17.139.262), funders (45.661), topics (4.516) y dos archivos de works de la partición `updated_date=2026-09-23` (558.403). Si Kestra carga otra muestra, vuelvan a correr el perfil y actualicen la tabla.
 
 ---
 
@@ -10,21 +10,22 @@ Perfilamos Bronze antes de transformar, con una consulta que mide cada problema 
 
 | # | Problema | Evidencia | Acción | Justificación |
 |---|---|---|---|---|
-| A03 / A02 | Un mismo award aparece en varias versiones (`updated_date` distinta) y, si Kestra recarga un archivo, en copias exactas | ‹A03› con más de una versión; ‹A02› copias exactas | Historial con grain award + versión (`slv_awards_history`, append). La tabla de estado actual (`slv_awards`) se queda con la versión más reciente. Las copias exactas se descartan. | OpenAlex mueve un registro a la partición de su nueva fecha cuando cambia. Sin esto, cada carga incremental duplicaría awards y los montos se sumarían dos veces. |
-| A04 | Awards sin `description` | ‹A04› | Se conservan, con `has_description = false` | La ayuda existe y cuenta para los análisis de financiamiento, pero sin texto no se puede vectorizar. La OBT filtra con la bandera en vez de perder la fila en Silver. |
-| A05 | Awards sin monto | ‹A05› | Se deja `NULL`; no se imputa | Que falte el monto depende del financiador (algunos no lo publican), así que no es un faltante al azar (probable MNAR). Imputar con la media inventaría dinero y sesgaría por financiador. |
-| A06 | Montos ≤ 0 | ‹A06› de los awards con monto | `amount = NULL` y `is_amount_invalid = true` | Una ayuda de 0 o negativa no es un monto real; en la práctica es "no informado". |
-| A07 | Montos en monedas distintas de USD | ‹A07› de los awards con monto | `amount_usd` solo cuando `currency = 'USD'` | Sumar EUR con USD da cifras sin sentido. No convertimos monedas (queda en Limitaciones). |
-| A08 | Fecha de fin anterior a la de inicio | ‹A08› de los awards con ambas fechas | `end_date = NULL` y `has_inconsistent_dates = true` | Viola una regla del dominio; la duración calculada sería negativa. |
-| A09 | Sin fecha de inicio exacta | ‹A09› sin fecha ni año | Si hay `start_year`, se usa el 1 de enero y se marca `is_start_date_from_year` | Conserva la dimensión de tiempo sin fingir precisión de día. |
-| A10 | Descripciones con etiquetas HTML | ‹A10› de las descripciones | Se quitan las etiquetas y los espacios repetidos | `<br/>` y `<p>` (típicos en NSF) ensucian los embeddings. |
-| A11 / A12 | Award sin funder, o con un funder que no está en el catálogo | ‹A11› / ‹A12› | En Gold van al miembro `UNKNOWN` de `dim_funder` | Mantiene la integridad referencial sin descartar el award. |
-| A01 / W01 | Registros sin ID | ‹A01› / ‹W01› | Se descartan | Sin llave no se pueden unir, deduplicar ni testear. |
-| W04 | Works sin abstract | ‹W04› | Se conservan con `has_abstract = false` | El work sigue siendo una publicación financiada; para el perfil del investigador queda el título. |
-| W05 | Año de publicación imposible | ‹W05› | `publication_year = NULL` | Son errores de captura (años 0 o 9999). |
-| W07 | Autorías sin `author_id` | ‹W07› de las autorías | Se descartan en `slv_work_authorships` | Sin ID no hay forma de construir el perfil del investigador ni de enlazarlo con sus awards. |
-| W08 | El mismo autor repetido en un work | ‹W08› | Se deja una vez, con su primera posición | Evita contar doble una autoría en el puente work-autor. |
-| W09 | Works que citan un award no cargado | ‹W09› de los enlaces | El enlace queda en Silver; Gold solo admite awards existentes | Consecuencia de cargar un subconjunto. Medirlo dice cuánta cobertura se pierde. |
+| A03 / A02 | Un mismo award aparece en varias versiones (`updated_date` distinta) y, si Kestra recarga un archivo, en copias exactas | En esta carga: 0 copias exactas (A02) y 0 awards con más de una versión (A03), porque un snapshot trae una sola versión de cada award. El problema aparece entre cargas incrementales | Historial con grain award + versión (`slv_awards_history`, append). La tabla de estado actual (`slv_awards`) se queda con la versión más reciente. Las copias exactas se descartan. | OpenAlex mueve un registro a la partición de su nueva fecha cuando cambia. Sin esto, cada carga incremental duplicaría awards y los montos se sumarían dos veces. |
+| A04 | Awards sin `description` | 70,62 % (12.103.179 de 17.139.262) | Se conservan, con `has_description = false` | La ayuda existe y cuenta para los análisis de financiamiento, pero sin texto no se puede vectorizar. La OBT filtra con la bandera en vez de perder la fila en Silver. |
+| A05 | Awards sin monto | 62,79 % (10.761.110 de 17.139.262) | Se deja `NULL`; no se imputa | Que falte el monto depende del financiador (algunos no lo publican), así que no es un faltante al azar (probable MNAR). Imputar con la media inventaría dinero y sesgaría por financiador. |
+| A06 | Montos ≤ 0 | 1,28 % (81.720 de 6.378.152 awards con monto) | `amount = NULL` y `is_amount_invalid = true` | Una ayuda de 0 o negativa no es un monto real; en la práctica es "no informado". |
+| A07 | Montos en monedas distintas de USD | 54,88 % (3.455.575 de 6.296.432 awards con monto y moneda) | `amount_usd` solo cuando `currency = 'USD'` | Sumar EUR con USD da cifras sin sentido. No convertimos monedas (queda en Limitaciones). |
+| A08 | Fecha de fin anterior a la de inicio | 2,59 % (165.556 de 6.382.858 awards con ambas fechas) | `end_date = NULL` y `has_inconsistent_dates = true` | Viola una regla del dominio; la duración calculada sería negativa. |
+| A09 | Sin fecha de inicio exacta | 58,09 % (9.955.757 de 17.139.262) sin fecha ni año | Si hay `start_year`, se usa el 1 de enero y se marca `is_start_date_from_year` | Conserva la dimensión de tiempo sin fingir precisión de día. |
+| A10 | Descripciones con etiquetas HTML | 0,81 % (40.541 de 5.036.083 descripciones) | Se quitan las etiquetas y los espacios repetidos | `<br/>` y `<p>` (típicos en NSF) ensucian los embeddings. |
+| A11 / A12 | Award sin funder, o con un funder que no está en el catálogo | 0,09 % (15.548) sin funder / 0 con funder fuera del catálogo | En Gold van al miembro `UNKNOWN` de `dim_funder` | Mantiene la integridad referencial sin descartar el award. |
+| A14 | Awards sin `primary_topic` | 93,04 % (15.946.100 de 17.139.262) | Se conservan; en Gold van al miembro `UNKNOWN` de `dim_topic` | Es un hueco de OpenAlex, no de la limpieza: Silver cuadra exacto con Bronze. El filtro por dominio del conocimiento (fase "Verificar") debe usar el tema del **work**, que sí está casi siempre presente. |
+| A01 / W01 | Registros sin ID | 0 / 0 | Se descartan | Sin llave no se pueden unir, deduplicar ni testear. |
+| W04 | Works sin abstract | 25,42 % (141.920 de 558.403) | Se conservan con `has_abstract = false` | El work sigue siendo una publicación financiada; para el perfil del investigador queda el título. |
+| W05 | Año de publicación imposible | 5 de 555.812 works con año (0,00 %) | `publication_year = NULL` | Son errores de captura (años 0 o 9999). |
+| W07 | Autorías sin `author_id` | 11,90 % (357.962 de 3.008.256 autorías) | Se descartan en `slv_work_authorships` | Sin ID no hay forma de construir el perfil del investigador ni de enlazarlo con sus awards. |
+| W08 | El mismo autor repetido en un work | 0,81 % (21.495 de 2.650.294 autorías con ID) | Se deja una vez, con su primera posición | Evita contar doble una autoría en el puente work-autor. |
+| W09 | Works que citan un award no cargado | 0 % (0 de 313.264 enlaces), porque se cargaron todos los awards; con un subconjunto de awards este número crece | El enlace queda en Silver; Gold solo admite awards existentes | Consecuencia de cargar un subconjunto. Medirlo dice cuánta cobertura se pierde. |
 
 **Consistencia de llaves.** OpenAlex entrega los IDs como URL (`https://openalex.org/G5066037109`) y otras tablas los referencian igual. Normalizamos todo al ID corto (`G5066037109`) con una macro (`oa_id`), así cada entidad tiene la misma llave en todas las tablas.
 
@@ -104,3 +105,4 @@ erDiagram
 - No se convierten monedas, así que el análisis de dinero usa solo USD.
 - Si un work se carga antes que el award que lo financió, ese enlace no entra a Gold hasta un `dbt build --full-refresh` de `fact_award_works`.
 - Los casos negativos del recomendador (awards que una persona no obtuvo) no son observables: no sabemos si postuló y fue rechazada o si nunca postuló.
+- OpenAlex publica `deleted_ids.csv.gz` con los registros borrados o fusionados; el pipeline todavía no lo procesa, así que esos works y awards permanecen en Silver y Gold.

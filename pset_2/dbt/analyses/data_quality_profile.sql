@@ -22,6 +22,7 @@ with aw as (
         try_to_date(raw:end_date::varchar)                      as end_date,
         raw:start_year                                          as start_year,
         {{ oa_id("raw:funder:id") }}                            as funder_id,
+        {{ oa_id("raw:primary_topic:id") }}                     as primary_topic_id,
         coalesce(try_cast(raw:funded_outputs_count::varchar as integer),
                  array_size(raw:funded_outputs), 0)             as funded_outputs_count
     from {{ source('bronze', 'raw_openalex_awards') }}
@@ -101,6 +102,9 @@ metrics as (
     union all
     select 'A13', 'awards', 'Completitud', 'Sin publicaciones enlazadas (funded_outputs = 0)',
            count_if(funded_outputs_count = 0), count(*) from aw
+    union all
+    select 'A14', 'awards', 'Completitud', 'Sin primary_topic (no se puede filtrar por dominio)',
+           count_if(primary_topic_id is null), count(*) from aw
 
     -- ---------------------------------------------------------------- WORKS
     union all

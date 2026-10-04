@@ -121,6 +121,8 @@ services:
   # ----------------------------------------------------------
   dbt:
     image: ghcr.io/dbt-labs/dbt-snowflake:1.9.latest
+    # La imagen oficial solo se publica para amd64: sin esto falla en Macs con Apple Silicon.
+    platform: linux/amd64
     container_name: pset2-dbt
     entrypoint: ["tail", "-f", "/dev/null"]
     working_dir: /usr/app/dbt
