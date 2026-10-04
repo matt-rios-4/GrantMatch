@@ -57,10 +57,13 @@ docker compose ps             # todos "running"/"healthy"
 
 ### Kestra (ingesta y orquestación)
 1. Abre http://localhost:8080 e inicia sesión.
-2. Los `.yml` de `kestra/flows/` aparecen solos en el namespace `pset2` (edítalos en tu PC; se re-sincronizan).
-3. Prueba la conexión: ejecuta el flow `smoke_test_snowflake` (botón **Execute**). Debe devolver la versión de Snowflake.
-4. Flow de ingesta real: ejecútalo manualmente con **Execute**, o espera su trigger. Para **backfill**, usa la pestaña *Triggers → Backfill* y elige el rango de fechas.
-5. Credenciales en flows: `{{ envs.snowflake_user }}`, `{{ envs.snowflake_password }}`, etc. (vienen del `.env`).
+2. Los `.yml` de `kestra/flows/` se montan desde el host y pertenecen al namespace `pset2`.
+3. Ejecuta `smoke_test_snowflake` para comprobar conectividad y `openalex_ingestion_preflight` para revisar stages, file format, tablas, rutas de S3, cargas existentes y forma del payload.
+4. La ingesta real es manual y requiere claves exactas de Parquet copiadas de `LIST`. Usa `copy_single_openalex_author_file` para una prueba autorizada de un archivo, o los flows `ingest_openalex_authors_batch` y `ingest_openalex_works_batch` para lotes explícitos de hasta 1000 archivos.
+5. No ejecutes un COPY completo hasta contar y comparar las rutas candidatas contra `_SOURCE_FILE` y revisar el plan. Los flows usan `FILES`, `FORCE = FALSE` y `ON_ERROR = 'ABORT_STATEMENT'`; no hay triggers ni carga automática de carpetas.
+6. Credenciales en flows: `{{ envs.snowflake_user }}`, `{{ envs.snowflake_password }}`, etc. (vienen del `.env`). Nunca guardes valores reales en el repositorio.
+
+Procedimiento, consultas de diagnóstico y controles de idempotencia: [docs/ingesta_kestra.md](docs/ingesta_kestra.md).
 
 ### dbt (Silver y Gold)
 ```bash

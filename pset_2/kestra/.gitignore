@@ -1,0 +1,3 @@
+# Kestra escribe aquí su copia de cada flow al sincronizar (<tenant>_<namespace>_<id>.yml),
+# además de los flows de tutorial. Son duplicados de los NN_*.yml versionados: no subirlos.
+flows/main_*.yml

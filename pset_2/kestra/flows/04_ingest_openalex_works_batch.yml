@@ -1,0 +1,143 @@
+# Crea RAW_OPENALEX_WORKS solo si falta y carga claves exactas copiadas de LIST.
+# Máximo Snowflake: 1000 archivos por COPY. No usar comodines ni carpetas.
+id: ingest_openalex_works_batch
+namespace: pset2
+
+inputs:
+  - id: file_keys
+    type: STRING
+    required: true
+    displayName: Claves works exactas separadas por coma
+    description: >-
+      Claves relativas a OPENALEX_WORKS_STAGE, exactas y comparadas previamente
+      contra RAW_OPENALEX_WORKS._SOURCE_FILE. Máximo 1000; sin espacios.
+    validator: '^[A-Za-z0-9_./=-]+[.]parquet(,[A-Za-z0-9_./=-]+[.]parquet)*$'
+
+tasks:
+  - id: ensure_works_bronze_table
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: >-
+      CREATE TABLE IF NOT EXISTS PSET2_DB.BRONZE.RAW_OPENALEX_WORKS (
+        PAYLOAD VARIANT,
+        _LOADED_AT TIMESTAMP_TZ,
+        _SOURCE_FILE VARCHAR,
+        _RUN_ID VARCHAR
+      )
+    fetchType: NONE
+
+  - id: validate_works_file_keys
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: >-
+      WITH requested AS (
+        SELECT VALUE::VARCHAR AS FILE_KEY
+        FROM TABLE(SPLIT_TO_TABLE('{{ inputs.file_keys }}', ','))
+      ), request_stats AS (
+        SELECT COUNT(*) AS REQUESTED_COUNT,
+               COUNT(DISTINCT FILE_KEY) AS UNIQUE_COUNT,
+               COUNT(*) - COUNT(DISTINCT FILE_KEY) AS DUPLICATE_INPUT_COUNT
+        FROM requested
+      ), copy_history_files AS (
+        SELECT FILE_NAME
+        FROM TABLE(PSET2_DB.INFORMATION_SCHEMA.COPY_HISTORY(
+          TABLE_NAME => 'PSET2_DB.BRONZE.RAW_OPENALEX_WORKS',
+          START_TIME => DATEADD('day', -14, CURRENT_TIMESTAMP())
+        ))
+        WHERE STATUS = 'Loaded'
+      ), already_loaded AS (
+        SELECT COUNT(DISTINCT r.FILE_KEY) AS ALREADY_LOADED_COUNT
+        FROM requested r
+        WHERE EXISTS (
+          SELECT 1
+          FROM PSET2_DB.BRONZE.RAW_OPENALEX_WORKS t
+          WHERE REGEXP_REPLACE(t._SOURCE_FILE, '^data/parquet/works/', '') = r.FILE_KEY
+             OR t._SOURCE_FILE = r.FILE_KEY
+        ) OR EXISTS (
+          SELECT 1
+          FROM copy_history_files h
+          WHERE h.FILE_NAME = r.FILE_KEY
+        )
+      )
+      SELECT * FROM request_stats CROSS JOIN already_loaded
+    fetchType: FETCH_ONE
+
+  - id: fail_if_works_file_keys_are_not_new
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ outputs.validate_works_file_keys.row.REQUESTED_COUNT > 1000 or outputs.validate_works_file_keys.row.DUPLICATE_INPUT_COUNT > 0 or outputs.validate_works_file_keys.row.ALREADY_LOADED_COUNT > 0 }}"
+    errorMessage: "Lote rechazado: máximo 1000 archivos y todas las claves deben ser únicas y no estar en RAW_OPENALEX_WORKS._SOURCE_FILE."
+
+  - id: copy_works_explicit_files
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: >-
+      COPY INTO PSET2_DB.BRONZE.RAW_OPENALEX_WORKS
+        (PAYLOAD, _LOADED_AT, _SOURCE_FILE, _RUN_ID)
+      FROM (
+        SELECT
+          $1,
+          METADATA$START_SCAN_TIME::TIMESTAMP_TZ,
+          METADATA$FILENAME,
+          '{{ execution.id }}'
+        FROM @PSET2_DB.BRONZE.OPENALEX_WORKS_STAGE
+      )
+      FILES = ('{{ inputs.file_keys | replace({",": "','"}) }}')
+      FILE_FORMAT = (FORMAT_NAME = PSET2_DB.BRONZE.OPENALEX_PARQUET_FORMAT)
+      ON_ERROR = 'ABORT_STATEMENT'
+      FORCE = FALSE
+    fetchType: FETCH
+
+  - id: works_copy_history_after_batch
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: >-
+      SELECT FILE_NAME, STATUS, LAST_LOAD_TIME, ROW_COUNT, ROW_PARSED,
+             FIRST_ERROR_MESSAGE
+      FROM TABLE(PSET2_DB.INFORMATION_SCHEMA.COPY_HISTORY(
+        TABLE_NAME => 'PSET2_DB.BRONZE.RAW_OPENALEX_WORKS',
+        START_TIME => DATEADD('hour', -6, CURRENT_TIMESTAMP())
+      ))
+      WHERE FILE_NAME IN (
+        SELECT VALUE::VARCHAR FROM TABLE(SPLIT_TO_TABLE('{{ inputs.file_keys }}', ','))
+      )
+      ORDER BY LAST_LOAD_TIME DESC
+    fetchType: FETCH
+
+  - id: works_batch_validation_summary
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: >-
+      SELECT COUNT(DISTINCT FILE_NAME) AS COPIED_FILE_COUNT,
+             COALESCE(COUNT_IF(STATUS <> 'Loaded'), 0) AS ERROR_FILE_COUNT,
+             COALESCE(SUM(ROW_COUNT), 0) AS ROWS_LOADED
+      FROM TABLE(PSET2_DB.INFORMATION_SCHEMA.COPY_HISTORY(
+        TABLE_NAME => 'PSET2_DB.BRONZE.RAW_OPENALEX_WORKS',
+        START_TIME => DATEADD('hour', -6, CURRENT_TIMESTAMP())
+      ))
+      WHERE FILE_NAME IN (
+        SELECT VALUE::VARCHAR FROM TABLE(SPLIT_TO_TABLE('{{ inputs.file_keys }}', ','))
+      )
+    fetchType: FETCH_ONE
+
+  - id: fail_if_works_batch_not_fully_loaded
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ outputs.works_batch_validation_summary.row.COPIED_FILE_COUNT != outputs.validate_works_file_keys.row.UNIQUE_COUNT or outputs.works_batch_validation_summary.row.ERROR_FILE_COUNT > 0 }}"
+    errorMessage: "Lote WORKS incompleto o con errores según COPY_HISTORY; detener el proceso."
+
+outputs:
+  - id: batch_copy_history
+    type: JSON
+    value: "{{ outputs.works_copy_history_after_batch.rows }}"
+  - id: batch_summary
+    type: JSON
+    value: "{{ outputs.works_batch_validation_summary.row }}"
