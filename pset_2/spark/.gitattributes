@@ -1,0 +1,3 @@
+# Los scripts corren en contenedores Linux: con CRLF (clon en Windows) fallan.
+*.sh text eol=lf
+*.py text eol=lf

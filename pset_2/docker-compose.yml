@@ -137,11 +137,7 @@ services:
 
   # ----------------------------------------------------------
   # [ROL 3] Spark standalone (UI master: http://localhost:8090)
-  #  Correr jobs:
-  #   docker compose exec spark-master /opt/spark/bin/spark-submit \
-  #     --master spark://spark-master:7077 \
-  #     --packages net.snowflake:spark-snowflake_2.12:3.1.1 \
-  #     --conf spark.jars.ivy=/tmp/.ivy2 /opt/spark-apps/jobs/<job>.py
+  #  Construir la OBT:  docker compose exec spark-master /opt/spark-apps/run_obt.sh
   # ----------------------------------------------------------
   spark-master:
     image: apache/spark:3.5.3-python3
@@ -153,8 +149,12 @@ services:
       - "7077:7077"
     volumes:
       - ./spark:/opt/spark-apps                   # <- editar jobs desde tu PC
+      - ./secrets:/opt/secrets:ro                 # <- llave RSA opcional (gitignored)
+      - spark_ivy:/opt/ivy                        # <- cache del conector de Snowflake
     environment:
       <<: *snowflake-env
+      # Opcional: autenticación por llave RSA (ver spark/README.md). Vacío = usa password.
+      SNOWFLAKE_PRIVATE_KEY_FILE: ${SNOWFLAKE_PRIVATE_KEY_FILE:-}
     networks: [pset2_net]
 
   spark-worker:
@@ -177,6 +177,7 @@ volumes:
   postgres_data:
   kestra_data:
   kestra_wd:
+  spark_ivy:        # [ROL 3] jars del conector Snowflake (evita re-descargarlos)
 
 networks:
   pset2_net:
