@@ -22,7 +22,7 @@ pset_2/
 ```
 
 ## 1. Requisitos
-- Docker Desktop (Compose v2.24+) con **≥ 6 GB de RAM** asignados.
+- Docker Desktop (Compose v2.24+) con **≥ 8 GB de RAM** asignados (Kestra ~1.6 GB, Spark worker 3 GB, master/driver ~1 GB).
 - Git. Cuenta de Snowflake (trial sirve) con permisos para crear DB/warehouse.
 - En Windows: ejecutar los comandos desde PowerShell, Git Bash o WSL.
 
