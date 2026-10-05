@@ -1,0 +1,67 @@
+% Diagrama de arquitectura del PSet 2 (se incluye con \input; requiere tikz con las
+% librerías positioning, arrows.meta, fit, backgrounds y los colores del memo).
+\begin{tikzpicture}[
+    font=\footnotesize,
+    every node/.append style={execute at begin node=\hyphenpenalty10000\relax},
+    caja/.style={draw=acento, rounded corners=2pt, fill=white, align=center,
+                 inner sep=3pt, text width=#1},
+    caja/.default=30mm,
+    capa/.style={draw=acento, rounded corners=2pt, fill=filaclara, align=left,
+                 inner sep=3pt, text width=45mm},
+    grupo/.style={draw=gris, dashed, rounded corners=4pt, inner sep=6pt},
+    glabel/.style={font=\scriptsize\bfseries, text=gris},
+    dato/.style={-{Stealth[length=2.2mm]}, thick, acento},
+    ctrl/.style={-{Stealth[length=2mm]}, gris, dashed},
+    etq/.style={font=\scriptsize, inner sep=1.5pt, text=gris},
+  ]
+  % ---------------- Snowflake (columna derecha)
+  \node[capa] (bronze) at (9.6, 0) {\textbf{BRONZE}\quad\texttt{\scriptsize RAW\_OPENALEX\_*}\\
+      registro original en \texttt{RAW} (VARIANT)\\ + \texttt{\_SOURCE\_FILE}, \texttt{\_LOADED\_AT}};
+  \node[capa] (silver) at (9.6, -2.0) {\textbf{SILVER}\quad\texttt{\scriptsize slv\_*}\\
+      historial (append) y estado actual\\ autores y awards aplanados};
+  \node[capa] (gold) at (9.6, -3.9) {\textbf{GOLD}\quad star schema\\
+      \texttt{\scriptsize fact\_awards}, \texttt{\scriptsize fact\_award\_works}\\ 7 dimensiones + puente};
+  \node[capa] (obt) at (9.6, -5.7) {\textbf{OBT}\quad\texttt{\scriptsize OBT\_AWARD\_WORK}\\
+      + \texttt{\scriptsize OBT\_AWARD\_WORK\_VALIDATION}};
+  \begin{scope}[on background layer]
+    \node[grupo, fit=(bronze)(silver)(gold)(obt)] (sf) {};
+  \end{scope}
+  \node[glabel, anchor=south] at (sf.north) {Snowflake · \texttt{PSET2\_DB} · warehouse \texttt{PSET2\_WH} (X-Small)};
+
+  % ---------------- Fuente (arriba a la izquierda)
+  \node[caja=36mm] (s3) at (1.4, 0) {\textbf{OpenAlex} · S3 público\\
+      {\scriptsize\texttt{s3://openalex/data/parquet/}}\\ awards · funders\\ topics · works\\
+      {\scriptsize works por \texttt{updated\_date}}\\ {\scriptsize\texttt{manifest.json}}};
+
+  % ---------------- docker-compose (abajo a la izquierda)
+  \node[caja=30mm] (kestra) at (1.1, -2.3) {\textbf{Kestra 1.3.37}\\
+      {\scriptsize\texttt{ingest\_openalex\_bronze}}\\ trigger diario\\ retries · backfill};
+  \node[caja=17mm] (pg) at (4.35, -1.95) {\scriptsize Postgres\\[-1pt]\scriptsize(metadata)};
+  \node[caja=17mm] (deploy) at (4.35, -2.85) {\scriptsize\texttt{kestra-deploy}};
+  \node[caja=30mm] (dbt) at (1.1, -3.95) {\textbf{dbt Core 1.9}\\ {\scriptsize contenedor \texttt{pset2-dbt}}};
+  \node[caja=30mm] (spark) at (1.1, -5.65) {\textbf{Spark 3.5}\\ {\scriptsize master + worker}\\ {\scriptsize\texttt{run\_obt.sh}}};
+  \begin{scope}[on background layer]
+    \node[grupo, fit=(kestra)(pg)(deploy)(dbt)(spark)] (compose) {};
+  \end{scope}
+  \node[glabel, anchor=north west] at (compose.south west) {docker-compose (local)};
+
+  % ---------------- flujo de datos
+  \draw[dato] (s3.east) -- node[etq, above, pos=0.4] {\textbf{1}\; COPY INTO (stage externo)} (bronze.west);
+  \draw[dato] (bronze) -- (silver);
+  \draw[dato] (silver) -- node[etq, right] {\textbf{2}\; dbt build} (gold);
+  \draw[dato] (gold) -- node[etq, right] {\textbf{3}\; Spark} (obt);
+
+  % ---------------- orquestación / control
+  \draw[ctrl] (s3.south -| kestra.north) -- node[etq, right, pos=0.3] {fecha del snapshot} (kestra.north);
+  \draw[ctrl] (kestra.east |- pg.north) -| node[etq, pos=0.8, right] {SQL} (6.7, 0);
+  \draw[ctrl] (kestra.south) -- node[etq, left] {docker exec} (dbt.north);
+  \draw[ctrl] (dbt.south) -- node[etq, left] {docker exec} (spark.north);
+  \draw[ctrl] (deploy.west) -- node[etq, above, pos=0.45] {flows} (deploy.west -| kestra.east);
+  \draw[ctrl] (dbt.east) -- node[etq, above, pos=0.6] {SQL (Silver, Gold)} (dbt.east -| sf.west);
+  \draw[ctrl] (spark.east) -- node[etq, above, pos=0.6] {conector Spark–Snowflake} (spark.east -| sf.west);
+
+  % ---------------- leyenda
+  \node[font=\scriptsize, text=gris, anchor=north east] at (sf.south east) {%
+    \tikz[baseline=-0.5ex]\draw[dato] (0,0) -- (6mm,0);~datos\qquad
+    \tikz[baseline=-0.5ex]\draw[ctrl] (0,0) -- (6mm,0);~orquestación};
+\end{tikzpicture}
