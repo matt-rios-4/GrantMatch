@@ -1,7 +1,7 @@
 # PSet 2 — Subvenciones con Ruta: Pipeline ELT End-to-End
 
 ```
-Fuente (S3: OpenAlex / NSF)
+Fuente (S3: OpenAlex)
    → Kestra (ingesta + orquestación, COPY INTO)
    → Snowflake BRONZE (dato crudo)
    → dbt SILVER (limpieza)
@@ -19,10 +19,10 @@ Diagramas de arquitectura y del star schema (imagen + fuente Graphviz): [docs/di
 pset_2/
 ├── docker-compose.yml      # Kestra + Postgres + dbt + Spark (red pset2_net)
 ├── .env.example            # plantilla de variables (copiar a .env)
-├── kestra/flows/           # flows YAML (se sincronizan solos)       -> ROL 1
+├── kestra/flows/           # flows YAML (los despliega kestra-deploy) -> ROL 1
 ├── dbt/                    # proyecto dbt (bronze/silver/gold)        -> ROL 2
 ├── spark/jobs/             # jobs PySpark                             -> ROL 3
-└── docs/                   # prompt maestro, roles, SQL de Snowflake, memo, diagramas
+└── docs/                   # roles, SQL de Snowflake, ingesta, diagramas
 ```
 
 ## 1. Requisitos
@@ -102,7 +102,6 @@ docker compose down -v               # apagar y BORRAR volúmenes (reset total)
 - Cambios en `docker-compose.yml`: solo en tu sección marcada `[ROL X]`; avisen al Tech Lead.
 - Cada quien usa su propio `.env` local. Si agregan una variable nueva, **añádanla también a `.env.example`** (vacía).
 - Antes de cada commit: `git status` y confirmar que no aparece `.env` ni datos (`.gitignore` los bloquea).
-- Prompts para trabajar con IA: [docs/PROMPT_MAESTRO.md](docs/PROMPT_MAESTRO.md).
 
 ## 6. Solución de problemas
 | Síntoma | Causa / solución |

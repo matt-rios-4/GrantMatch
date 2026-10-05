@@ -81,7 +81,7 @@ class Gold:
     """Lectura de tablas GOLD.
 
     `where` se ejecuta dentro de Snowflake: así solo viajan a Spark las filas que la OBT
-    usa (p. ej. ~130 mil de los 17 M de awards), en vez de copiar tablas completas.
+    usa (p. ej. ~860 mil de los 17 M de awards), en vez de copiar tablas completas.
     """
 
     def __init__(self, spark: SparkSession):

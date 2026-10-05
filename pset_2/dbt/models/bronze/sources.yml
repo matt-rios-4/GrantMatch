@@ -36,7 +36,7 @@ sources:
         columns: *bronze_columns
 
       - name: raw_openalex_funders
-        description: "Entidades financiadoras (funders), ~30 mil."
+        description: "Entidades financiadoras (funders), ~46 mil (45 661 en la carga del 4-oct-2026)."
         columns: *bronze_columns
 
       - name: raw_openalex_topics
