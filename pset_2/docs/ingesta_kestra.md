@@ -81,10 +81,10 @@ ORDER BY last_load_time DESC;
 
 | Prueba | Resultado |
 |---|---|
-| Primera corrida completa (partición 2026-09-23, 2 archivos de works) | `SUCCESS`. Cargas: topics 4 516 filas (3 s), funders 45 661 (5 s), awards 17 139 262 (1 min 34 s), works 558 403 (1 min 18 s). Después, `dbt build` PASS=127 y OBT con 313 264 filas = `FACT_AWARD_WORKS` |
+| Primera corrida completa (partición 2026-09-23, 2 archivos de works) | `SUCCESS`. Cargas: topics 4 516 filas (3 s), funders 45 661 (5 s), awards 17 139 262 (1 min 34 s), works 558 403 (1 min 18 s). Después, `dbt build` PASS=127 y OBT con 313 264 filas = `FACT_AWARD_WORKS` (muestra inicial de una sola partición; la OBT final, tras el backfill, tiene 1 882 074 filas) |
 | Re-ejecución sobre lo ya cargado | 0 filas nuevas en las 4 tablas, en 15 s: `COPY INTO` no recarga archivos |
 | Modo automático (watermark) sin snapshot nuevo | Última partición cargada = snapshot (2026-09-23): termina en "works al día", con 0 filas y en 15 s |
-| Backfill `backfill_from=2026-09-20`, `backfill_to=2026-09-21` (1 archivo por día) | Plan de 2 particiones y 754 922 works nuevos en 1 min 35 s; `dbt build` incremental PASS=127 en 2 min 34 s; OBT con 1 882 074 filas = `FACT_AWARD_WORKS` |
+| Backfill `backfill_from=2026-09-20`, `backfill_to=2026-09-21` (1 archivo por día) | Plan de 2 particiones y 754 922 works nuevos en 1 min 35 s; `dbt build` incremental PASS=127 en 2 min 34 s. El paso de Spark de esta corrida falló por memoria (fila siguiente); con el executor de 2g (#5) la OBT quedó en 1 882 074 filas = `FACT_AWARD_WORKS` |
 | Falla real (Spark sin memoria con executor de 1g, antes de #5) | La tarea `spark_obt` falla, el flow queda en `FAILED` y corre el bloque `errors` |
 | Reintentos | Con una conexión inválida a propósito, la tarea reintenta con espera exponencial y después corre `errors` |
 | `docker compose up` desde cero | `kestra-deploy` despliega los flows, rechaza (exit 1) un flow inválido e ignora copias `main_*.yml` |
