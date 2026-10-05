@@ -63,8 +63,10 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8080:8080"   # UI / API
-      - "8081:8081"   # management / health
+      # Solo localhost: con docker.sock montado, exponer Kestra en la red (p. ej. el Wi-Fi
+      # de la U) permitiría a terceros lanzar contenedores y leer las credenciales.
+      - "127.0.0.1:8080:8080"   # UI / API
+      - "127.0.0.1:8081:8081"   # management / health
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8081/health >/dev/null"]
       interval: 10s
@@ -101,7 +103,7 @@ services:
           server:
             basicAuth:
               username: ${KESTRA_USER:-admin@pset2.local}
-              password: ${KESTRA_PASSWORD:-Pset2Local1234}
+              password: ${KESTRA_PASSWORD:?Define KESTRA_PASSWORD en .env (8+ caracteres, mayúscula y número)}
           repository:
             type: postgres
           storage:
@@ -139,14 +141,18 @@ services:
       - ./kestra/flows:/flows:ro
     environment:
       KESTRA_USER: ${KESTRA_USER:-admin@pset2.local}
-      KESTRA_PASSWORD: ${KESTRA_PASSWORD:-Pset2Local1234}
+      KESTRA_PASSWORD: ${KESTRA_PASSWORD:?Define KESTRA_PASSWORD en .env}
     entrypoint: ["/bin/sh", "-c"]
+    # /flows/import responde 200 aunque un flow sea inválido: los que fallan vienen en el
+    # cuerpo de la respuesta. Por eso se exige que el cuerpo sea "[]". Solo se importan
+    # los NN_*.yml versionados (no copias main_*.yml que pudieran quedar en disco).
     command:
       - |
         set -e
-        for f in /flows/*.yml; do
-          curl -fsS -o /dev/null -u "$$KESTRA_USER:$$KESTRA_PASSWORD" \
-            -X POST http://kestra:8080/api/v1/main/flows/import -F "fileUpload=@$$f"
+        for f in /flows/[0-9][0-9]_*.yml; do
+          r=$$(curl -fsS -u "$$KESTRA_USER:$$KESTRA_PASSWORD" \
+            -X POST http://kestra:8080/api/v1/main/flows/import -F "fileUpload=@$$f")
+          if [ "$$r" != "[]" ]; then echo "ERROR: Kestra rechazó $$f: $$r"; exit 1; fi
           echo "flow desplegado: $$f"
         done
     restart: "no"

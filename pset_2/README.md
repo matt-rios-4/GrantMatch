@@ -46,7 +46,7 @@ docker compose ps             # todos "running"/"healthy"
 
 | Servicio | URL / acceso |
 |---|---|
-| Kestra UI | http://localhost:8080 (usuario/clave = `KESTRA_USER` / `KESTRA_PASSWORD`; `KESTRA_USER` debe ser un email) |
+| Kestra UI | http://localhost:8080, solo desde tu máquina (usuario/clave = `KESTRA_USER` / `KESTRA_PASSWORD`; `KESTRA_USER` debe ser un email; `KESTRA_PASSWORD` es obligatoria) |
 | Spark Master UI | http://localhost:8090 |
 | Spark Worker UI | http://localhost:8091 |
 | dbt | contenedor `pset2-dbt` (se usa con `docker compose exec dbt ...`) |
@@ -58,10 +58,10 @@ docker compose ps             # todos "running"/"healthy"
 ### Kestra (ingesta y orquestación)
 1. Abre http://localhost:8080 e inicia sesión. Al hacer `docker compose up`, el servicio `kestra-deploy` importa los `.yml` de `kestra/flows/` en el namespace `pset2`. Si editas un flow, vuelve a desplegarlo con `docker compose up kestra-deploy`.
 2. Ejecuta `smoke_test_snowflake` para comprobar la conexión.
-3. **`ingest_openalex_bronze`** es el pipeline completo: carga topics, funders y awards (completos) y una partición de works a `BRONZE` con `COPY INTO`, y luego corre `dbt build` y la OBT de Spark.
-   - **Automático:** trigger `daily` (06:00 UTC).
-   - **Manual:** botón **Execute**; con `partition_date` eliges la partición de works.
-   - **Backfill:** *Triggers → daily → Backfill* con el rango de fechas.
+3. **`ingest_openalex_bronze`** es el pipeline completo: carga a `BRONZE` con `COPY INTO` topics, funders y awards (completos) y las particiones nuevas de works (watermark contra el último snapshot de OpenAlex), y luego corre `dbt build` y la OBT de Spark.
+   - **Automático:** trigger `daily` (06:00 UTC). Déjalo activo en **una sola** instancia de Kestra del equipo.
+   - **Manual:** botón **Execute**.
+   - **Backfill de históricos:** Execute con `backfill_from` / `backfill_to`.
 4. Las credenciales de los flows salen del `.env` (`{{ envs.snowflake_user }}`, …); nunca se escriben en el repositorio.
 
 Diseño, retries, idempotencia y consultas de verificación: [docs/ingesta_kestra.md](docs/ingesta_kestra.md).
