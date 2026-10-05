@@ -46,7 +46,7 @@ docker compose ps             # todos "running"/"healthy"
 
 | Servicio | URL / acceso |
 |---|---|
-| Kestra UI | http://localhost:8080 (usuario/clave = `KESTRA_USER` / `KESTRA_PASSWORD`) |
+| Kestra UI | http://localhost:8080, solo desde tu máquina (usuario/clave = `KESTRA_USER` / `KESTRA_PASSWORD`; `KESTRA_USER` debe ser un email; `KESTRA_PASSWORD` es obligatoria) |
 | Spark Master UI | http://localhost:8090 |
 | Spark Worker UI | http://localhost:8091 |
 | dbt | contenedor `pset2-dbt` (se usa con `docker compose exec dbt ...`) |
@@ -56,11 +56,15 @@ docker compose ps             # todos "running"/"healthy"
 ## 3. Ejecutar cada componente
 
 ### Kestra (ingesta y orquestación)
-1. Abre http://localhost:8080 e inicia sesión.
-2. Los `.yml` de `kestra/flows/` aparecen solos en el namespace `pset2` (edítalos en tu PC; se re-sincronizan).
-3. Prueba la conexión: ejecuta el flow `smoke_test_snowflake` (botón **Execute**). Debe devolver la versión de Snowflake.
-4. Flow de ingesta real: ejecútalo manualmente con **Execute**, o espera su trigger. Para **backfill**, usa la pestaña *Triggers → Backfill* y elige el rango de fechas.
-5. Credenciales en flows: `{{ envs.snowflake_user }}`, `{{ envs.snowflake_password }}`, etc. (vienen del `.env`).
+1. Abre http://localhost:8080 e inicia sesión. Al hacer `docker compose up`, el servicio `kestra-deploy` importa los `.yml` de `kestra/flows/` en el namespace `pset2`. Si editas un flow, vuelve a desplegarlo con `docker compose up kestra-deploy`.
+2. Ejecuta `smoke_test_snowflake` para comprobar la conexión.
+3. **`ingest_openalex_bronze`** es el pipeline completo: carga a `BRONZE` con `COPY INTO` topics, funders y awards (completos) y las particiones nuevas de works (watermark contra el último snapshot de OpenAlex), y luego corre `dbt build` y la OBT de Spark.
+   - **Automático:** trigger `daily` (06:00 UTC). Déjalo activo en **una sola** instancia de Kestra del equipo.
+   - **Manual:** botón **Execute**.
+   - **Backfill de históricos:** Execute con `backfill_from` / `backfill_to`.
+4. Las credenciales de los flows salen del `.env` (`{{ envs.snowflake_user }}`, …); nunca se escriben en el repositorio.
+
+Diseño, retries, idempotencia y consultas de verificación: [docs/ingesta_kestra.md](docs/ingesta_kestra.md).
 
 ### dbt (Silver y Gold)
 ```bash
@@ -101,9 +105,12 @@ docker compose down -v               # apagar y BORRAR volúmenes (reset total)
 |---|---|
 | Kestra no abre en :8080 | Esperar ~30–60 s tras `up`; ver `docker compose logs kestra`. Si Postgres no está *healthy*, `docker compose down -v` y reintentar. |
 | `Bind for 0.0.0.0:8080 failed` | Puerto ocupado: cambia el mapeo `8080:8080` en el compose. |
-| Flow no aparece en Kestra | Revisa que el YAML tenga `id` y `namespace` y que no haya error de sintaxis (UI → Flows). |
+| Flow no aparece en Kestra | `docker compose logs kestra-deploy`: muestra qué flow falló al importarse (YAML inválido, `id` o `namespace` faltante). Re-despliega con `docker compose up kestra-deploy`. |
 | dbt: `Env var required but not provided` | Falta una variable en `.env`; luego `docker compose up -d dbt` para recrear el contenedor. |
 | Cambié `.env` y no se refleja | `docker compose up -d` (recrea contenedores con las nuevas variables). |
+| Kestra responde 401 o Snowflake rechaza el login con un `.env` que "está bien" | El `.env` tiene fines de línea de Windows (CRLF) o espacios alrededor del `=`. Guárdalo con LF y sin espacios: `KEY=valor`. Luego `docker compose up -d`. |
+| Snowflake: `404 Not Found ... login-request` | `SNOWFLAKE_ACCOUNT` es solo el *locator* (`AB12345`). Agrega región y nube (`AB12345.us-east-2.aws`) o usa el formato `ORGNAME-ACCOUNTNAME`. |
+| El job de Spark queda en `Initial job has not accepted any resources` | El worker perdió el registro con el master (pasa si la Mac se suspende con el stack arriba). `docker compose restart spark-worker`: el job retoma solo. |
 | Spark se queda sin memoria | Baja `SPARK_WORKER_MEMORY` o sube la RAM de Docker Desktop. |
 | `docker.sock` falla en Windows | Usar Docker Desktop con backend WSL2. |
 

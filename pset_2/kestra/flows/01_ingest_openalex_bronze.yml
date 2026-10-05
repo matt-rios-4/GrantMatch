@@ -1,0 +1,260 @@
+# [ROL 1] Ingesta automática de OpenAlex (S3 público) a la capa BRONZE de Snowflake,
+# seguida de dbt (SILVER/GOLD) y Spark (OBT).
+#
+# Qué carga y por qué (contrato: dbt/docs/CONTRATO_BRONZE.md):
+#   - topics, funders y awards: completos (~5 GB). COPY INTO salta los archivos ya cargados;
+#     cuando OpenAlex publica un snapshot nuevo reescribe los archivos y se recargan
+#     (Silver descarta las copias exactas).
+#   - works: incremental por watermark. Cada corrida lee la fecha del último snapshot
+#     (manifest.json) y la última partición updated_date ya cargada en BRONZE, y carga las
+#     particiones intermedias, como máximo `works_max_days` días y `works_files_per_day`
+#     archivos por día (un día completo pesa ~136 GB). Así se pone al día sola después de
+#     cada snapshot, sin huecos ni cargas manuales.
+#
+# Frecuencia: diaria (trigger `daily`). Backfill de históricos: Execute con
+# `backfill_from` / `backfill_to` (rango de particiones updated_date).
+# Idempotencia: re-ejecutar no duplica (COPY salta archivos ya cargados) y `concurrency`
+# impide dos cargas simultáneas.
+id: ingest_openalex_bronze
+namespace: pset2
+description: OpenAlex S3 → BRONZE (COPY INTO) → dbt build → Spark OBT
+
+labels:
+  pset: "2"
+  rol: ingesta
+
+# Una sola ejecución a la vez: una corrida manual y la del schedule no cargan en paralelo
+# (evita COPY y dbt build concurrentes sobre la misma base).
+concurrency:
+  limit: 1
+  behavior: QUEUE
+
+inputs:
+  - id: backfill_from
+    type: DATE
+    required: false
+    displayName: Backfill desde (partición updated_date de works)
+    description: Vacío = modo automático (watermark hasta el último snapshot).
+  - id: backfill_to
+    type: DATE
+    required: false
+    displayName: Backfill hasta (vacío = igual a backfill_from)
+  - id: works_files_per_day
+    type: INT
+    defaults: 2
+    min: 1
+    max: 10  # el PATTERN usa part_000[0-N]: válido hasta 10 archivos por día
+    displayName: Archivos de works por partición (part_0000 … part_000N)
+  - id: works_max_days
+    type: INT
+    defaults: 7
+    min: 1
+    max: 62
+    displayName: Máximo de particiones (días) de works por corrida
+  - id: works_initial_days
+    type: INT
+    defaults: 1
+    min: 1
+    max: 31
+    displayName: Días a cargar en la primera corrida (Bronze vacío)
+  - id: run_transformations
+    type: BOOL
+    defaults: true
+    displayName: Ejecutar dbt build y Spark después de la carga
+
+pluginDefaults:
+  # Conexión común: credenciales siempre desde el .env (ENV_SNOWFLAKE_* → envs.*).
+  - type: io.kestra.plugin.jdbc.snowflake.Query
+    values:
+      url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+      username: "{{ envs.snowflake_user }}"
+      password: "{{ envs.snowflake_password }}"
+      # Backoff exponencial ante fallas transitorias (red, 429/503, warehouse reanudándose):
+      # 30 s, 60 s, 120 s, ... con tope de 10 min entre intentos y 5 intentos en total.
+      retry:
+        type: exponential
+        interval: PT30S
+        delayFactor: 2.0
+        maxInterval: PT10M
+        maxAttempts: 5
+
+tasks:
+  # ---------------------------------------------------------------- setup (idempotente)
+  - id: setup_stage
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    description: Stage externo sobre el bucket público de OpenAlex (no requiere credenciales AWS).
+    # OR REPLACE corrige un stage que apunte a otra URL; los metadatos de carga viven en las tablas.
+    sql: >-
+      CREATE OR REPLACE STAGE {{ envs.snowflake_database }}.BRONZE.OPENALEX_STAGE
+        URL = 's3://openalex/data/parquet/'
+        FILE_FORMAT = (TYPE = PARQUET)
+    fetchType: NONE
+
+  - id: setup_tables
+    type: io.kestra.plugin.core.flow.ForEach
+    description: Tablas Bronze con el esquema del contrato (registro original en RAW + metadata).
+    values: ["AWARDS", "FUNDERS", "TOPICS", "WORKS"]
+    tasks:
+      - id: create_table
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        sql: >-
+          CREATE TABLE IF NOT EXISTS {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_{{ taskrun.value }} (
+            RAW                 VARIANT        NOT NULL,
+            _SOURCE_FILE        VARCHAR        NOT NULL,
+            _SOURCE_ROW_NUMBER  NUMBER(38, 0),
+            _LOADED_AT          TIMESTAMP_LTZ  NOT NULL
+          )
+        fetchType: NONE
+
+  # ---------------------------------------------------------------- catálogos
+  - id: load_catalogs
+    type: io.kestra.plugin.core.flow.ForEach
+    description: topics, funders y awards completos; COPY salta los archivos ya cargados.
+    values: ["TOPICS", "FUNDERS", "AWARDS"]
+    tasks:
+      - id: copy_catalog
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        timeout: PT1H
+        sql: >-
+          COPY INTO {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_{{ taskrun.value }}
+            (RAW, _SOURCE_FILE, _SOURCE_ROW_NUMBER, _LOADED_AT)
+          FROM (
+            SELECT $1, METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, CURRENT_TIMESTAMP()
+            FROM @{{ envs.snowflake_database }}.BRONZE.OPENALEX_STAGE/{{ taskrun.value | lower }}/
+          )
+          PATTERN = '.*[.]parquet'
+          ON_ERROR = ABORT_STATEMENT
+        fetchType: FETCH
+
+  # ---------------------------------------------------------------- works (watermark)
+  - id: snapshot
+    type: io.kestra.plugin.core.http.Request
+    description: Fecha del último snapshot publicado de works (manifest.json de OpenAlex).
+    uri: https://openalex.s3.amazonaws.com/data/parquet/works/manifest.json
+    retry:
+      type: exponential
+      interval: PT30S
+      delayFactor: 2.0
+      maxInterval: PT10M
+      maxAttempts: 5
+
+  - id: works_plan
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    description: Particiones de works a cargar (watermark → snapshot, o el rango del backfill).
+    sql: |
+      WITH loaded AS (
+        SELECT MAX(TRY_TO_DATE(REGEXP_SUBSTR(_SOURCE_FILE, 'updated_date=([0-9]{4}-[0-9]{2}-[0-9]{2})', 1, 1, 'e', 1))) AS last_loaded
+        FROM {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_WORKS
+      ),
+      bounds AS (
+        SELECT
+      {% if inputs.backfill_from is not null %}
+          '{{ inputs.backfill_from }}'::DATE AS d_from,
+          '{{ inputs.backfill_to ?? inputs.backfill_from }}'::DATE AS d_to,
+      {% else %}
+          COALESCE(DATEADD('day', 1, last_loaded),
+                   DATEADD('day', 1 - {{ inputs.works_initial_days }}, '{{ outputs.snapshot.body | jq('.date') | first }}'::DATE)) AS d_from,
+          '{{ outputs.snapshot.body | jq('.date') | first }}'::DATE AS d_to,
+      {% endif %}
+          last_loaded
+        FROM loaded
+      ),
+      days AS (
+        SELECT DATEADD('day', ROW_NUMBER() OVER (ORDER BY SEQ4()) - 1, b.d_from) AS d, b.d_to
+        FROM bounds b, TABLE(GENERATOR(ROWCOUNT => {{ inputs.works_max_days }}))
+      )
+      SELECT
+        (SELECT TO_CHAR(last_loaded, 'YYYY-MM-DD') FROM bounds) AS LAST_LOADED,
+        '{{ outputs.snapshot.body | jq('.date') | first }}' AS SNAPSHOT_DATE,
+        COUNT(d) AS N_DAYS,
+        COALESCE(LISTAGG(TO_CHAR(d, 'YYYY-MM-DD'), '|') WITHIN GROUP (ORDER BY d), '') AS DATES,
+        COALESCE(MAX(d) < MAX(d_to), FALSE) AS TRUNCATED
+      FROM days
+      WHERE d <= d_to
+    fetchType: FETCH_ONE
+
+  - id: load_works
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.works_plan.row.N_DAYS > 0 }}"
+    then:
+      - id: copy_works
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        description: Primeros `works_files_per_day` archivos de cada partición planificada.
+        timeout: PT2H
+        sql: >-
+          COPY INTO {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_WORKS
+            (RAW, _SOURCE_FILE, _SOURCE_ROW_NUMBER, _LOADED_AT)
+          FROM (
+            SELECT $1, METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, CURRENT_TIMESTAMP()
+            FROM @{{ envs.snowflake_database }}.BRONZE.OPENALEX_STAGE/works/
+          )
+          PATTERN = '.*updated_date=({{ outputs.works_plan.row.DATES }})/part_000[0-{{ inputs.works_files_per_day - 1 }}][.]parquet'
+          ON_ERROR = ABORT_STATEMENT
+        fetchType: FETCH
+    else:
+      - id: works_up_to_date
+        type: io.kestra.plugin.core.log.Log
+        message: >-
+          Works al día: última partición cargada {{ outputs.works_plan.row.LAST_LOADED }},
+          último snapshot de OpenAlex {{ outputs.works_plan.row.SNAPSHOT_DATE }}.
+
+  - id: load_summary
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    description: Filas cargadas por esta ejecución en cada tabla Bronze (evidencia de la corrida).
+    sql: >-
+      SELECT 'AWARDS' AS tabla, COUNT_IF(_LOADED_AT >= '{{ execution.startDate }}'::TIMESTAMP_LTZ) AS filas_nuevas, COUNT(*) AS filas_totales FROM {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_AWARDS
+      UNION ALL SELECT 'FUNDERS', COUNT_IF(_LOADED_AT >= '{{ execution.startDate }}'::TIMESTAMP_LTZ), COUNT(*) FROM {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_FUNDERS
+      UNION ALL SELECT 'TOPICS', COUNT_IF(_LOADED_AT >= '{{ execution.startDate }}'::TIMESTAMP_LTZ), COUNT(*) FROM {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_TOPICS
+      UNION ALL SELECT 'WORKS', COUNT_IF(_LOADED_AT >= '{{ execution.startDate }}'::TIMESTAMP_LTZ), COUNT(*) FROM {{ envs.snowflake_database }}.BRONZE.RAW_OPENALEX_WORKS
+    fetchType: FETCH
+
+  - id: log_summary
+    type: io.kestra.plugin.core.log.Log
+    message: >-
+      Works: particiones [{{ outputs.works_plan.row.DATES }}]
+      (última cargada antes: {{ outputs.works_plan.row.LAST_LOADED }}, snapshot {{ outputs.works_plan.row.SNAPSHOT_DATE }}{{ outputs.works_plan.row.TRUNCATED ? '; quedan particiones pendientes para la próxima corrida' : '' }}).
+      Filas por tabla (nuevas / totales): {{ outputs.load_summary.rows }}.
+
+  # ---------------------------------------------------------------- transformaciones
+  - id: transformations
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.run_transformations }}"
+    then:
+      - id: dbt_build
+        type: io.kestra.plugin.scripts.shell.Commands
+        description: SILVER y GOLD con sus tests (contenedor pset2-dbt del compose).
+        timeout: PT1H
+        taskRunner:
+          type: io.kestra.plugin.scripts.runner.docker.Docker
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        containerImage: docker:27-cli
+        commands:
+          - docker exec pset2-dbt sh -c "dbt deps && dbt build"
+
+      - id: spark_obt
+        type: io.kestra.plugin.scripts.shell.Commands
+        description: One Big Table desde GOLD (contenedor pset2-spark-master del compose).
+        timeout: PT1H
+        taskRunner:
+          type: io.kestra.plugin.scripts.runner.docker.Docker
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        containerImage: docker:27-cli
+        commands:
+          - docker exec pset2-spark-master /opt/spark-apps/run_obt.sh
+
+errors:
+  - id: report_failure
+    type: io.kestra.plugin.core.log.Log
+    level: ERROR
+    message: >-
+      La ingesta {{ flow.id }} falló en la ejecución {{ execution.id }}.
+      Revisa la pestaña Logs: las tareas de Snowflake ya agotaron sus reintentos.
+
+triggers:
+  - id: daily
+    type: io.kestra.plugin.core.trigger.Schedule
+    description: Todos los días a las 06:00 UTC. Si Kestra estuvo apagado, recupera solo la última fecha.
+    cron: "0 6 * * *"
+    recoverMissedSchedules: LAST

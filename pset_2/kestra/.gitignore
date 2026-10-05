@@ -1,0 +1,4 @@
+# Copias que escribe la sincronización de Kestra (si se reactiva micronaut.io.watch):
+# duplicados de los NN_<id>.yml versionados. No subirlos.
+flows/main_*.yml
+flows/*_pset2_*.yml
