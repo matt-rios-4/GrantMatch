@@ -14,6 +14,14 @@ Fuente (S3: OpenAlex)
 
 Diagramas de arquitectura y del star schema (imagen + fuente Graphviz): [docs/diagramas/](docs/diagramas/).
 
+## Entregables
+| Entregable | Dónde |
+|---|---|
+| Memo técnico (PDF) | [docs/PSet2_memo_Cazares_Rios_Diaz_Paredes.pdf](docs/PSet2_memo_Cazares_Rios_Diaz_Paredes.pdf) |
+| Diagrama de arquitectura | [docs/diagramas/arquitectura.png](docs/diagramas/arquitectura.png) |
+| Diagrama del modelo dimensional (star schema) | [docs/diagramas/star_schema.png](docs/diagramas/star_schema.png) |
+| Evidencia de Kestra: ejecuciones, trigger, backfill, falla y reintentos | [docs/evidencia_kestra/](docs/evidencia_kestra/) |
+
 ## Estructura
 ```
 pset_2/

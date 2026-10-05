@@ -86,5 +86,5 @@ ORDER BY last_load_time DESC;
 | Modo automático (watermark) sin snapshot nuevo | Última partición cargada = snapshot (2026-09-23): termina en "works al día", con 0 filas y en 15 s |
 | Backfill `backfill_from=2026-09-20`, `backfill_to=2026-09-21` (1 archivo por día) | Plan de 2 particiones y 754 922 works nuevos en 1 min 35 s; `dbt build` incremental PASS=127 en 2 min 34 s. El paso de Spark de esta corrida falló por memoria (fila siguiente); con el executor de 2g (#5) la OBT quedó en 1 882 074 filas = `FACT_AWARD_WORKS` |
 | Falla real (Spark sin memoria con executor de 1g, antes de #5) | La tarea `spark_obt` falla, el flow queda en `FAILED` y corre el bloque `errors` |
-| Reintentos | Con una conexión inválida a propósito, la tarea reintenta con espera exponencial y después corre `errors` |
+| Reintentos | Flow de prueba con la misma política de retry ([`prueba_reintentos.yml`](evidencia_kestra/prueba_reintentos.yml)) contra una tabla inexistente: 5 intentos con esperas de ~30, 60, 120 y 240 s (7 min 50 s en total) y después corre `errors` ([capturas](evidencia_kestra/)) |
 | `docker compose up` desde cero | `kestra-deploy` despliega los flows, rechaza (exit 1) un flow inválido e ignora copias `main_*.yml` |
