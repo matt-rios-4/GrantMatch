@@ -350,6 +350,12 @@ VALIDATION_SCHEMA = (
     "run_at timestamp, status string, base_rows long, obt_rows long, obt_distinct_keys long, "
     "orphans_total long, error string, metrics_json string"
 )
+# Mismo esquema que el conector crea a partir de VALIDATION_SCHEMA. Se crea explícitamente
+# porque column_mapping=name exige que la tabla ya exista (en una cuenta nueva no existe).
+VALIDATION_DDL = (
+    "CREATE TABLE IF NOT EXISTS {table} (RUN_AT TIMESTAMP_NTZ, STATUS VARCHAR, BASE_ROWS NUMBER, "
+    "OBT_ROWS NUMBER, OBT_DISTINCT_KEYS NUMBER, ORPHANS_TOTAL NUMBER, ERROR VARCHAR, METRICS_JSON VARCHAR)"
+)
 
 
 def save_validation(spark: SparkSession, metrics: dict, status: str, error: str) -> None:
@@ -364,6 +370,10 @@ def save_validation(spark: SparkSession, metrics: dict, status: str, error: str)
         sum(orphan_counts) if orphan_counts else -1,
         error,
         json.dumps(metrics, sort_keys=True),
+    )
+    options = snowflake_options(os.environ.get("SNOWFLAKE_SCHEMA_OBT", "OBT"))
+    spark.sparkContext._jvm.net.snowflake.spark.snowflake.Utils.runQuery(
+        options, VALIDATION_DDL.format(table=VALIDATION_TABLE)
     )
     # column_mapping=name: si el esquema cambia, no se desalinean columnas en silencio.
     write(spark.createDataFrame([row], VALIDATION_SCHEMA), VALIDATION_TABLE, "append", column_mapping="name")
