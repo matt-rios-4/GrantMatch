@@ -12,7 +12,7 @@ Fuente (S3: OpenAlex / NSF)
 
 ![Arquitectura del pipeline](docs/diagramas/arquitectura.png)
 
-Diagramas de arquitectura y del star schema (imagen + fuente TikZ): [docs/diagramas/](docs/diagramas/).
+Diagramas de arquitectura y del star schema (imagen + fuente Graphviz): [docs/diagramas/](docs/diagramas/).
 
 ## Estructura
 ```

@@ -1,0 +1,35 @@
+// Modelo dimensional (capa GOLD) del PSet 2: dos hechos que comparten dimensiones conformadas.
+// Render: dot -Tpdf star_schema.dot -o star_schema.pdf  (y -Tpng -Gdpi=220 para el README)
+digraph star_schema {
+  graph [rankdir=LR, newrank=true, nodesep=0.18, ranksep=0.6, bgcolor="white", pad=0.15];
+  node  [shape=plain, fontname="Liberation Sans", fontsize=12.5, fontcolor="#1A1A1A"];
+  edge  [color="#1F4E79", penwidth=1.0, dir=both, arrowsize=0.7];
+  fa [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="#E8EEF4"><TR><TD BGCOLOR="#1F4E79" ALIGN="LEFT"><FONT COLOR="white"><B>fact_awards</B></FONT></TD></TR><TR><TD ALIGN="LEFT"><I>grain: un award</I></TD></TR><TR><TD ALIGN="LEFT" PORT="pk"><B>award_key</B>  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK · FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="funder">funder_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="topic">topic_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="inst">institution_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="dates">start/end_date_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" BGCOLOR="white"><B>amount_usd</B></TD></TR><TR><TD ALIGN="LEFT" BGCOLOR="white"><B>duration_days</B></TD></TR><TR><TD ALIGN="LEFT" BGCOLOR="white"><B>funded_outputs_count</B></TD></TR><TR><TD ALIGN="LEFT" BGCOLOR="white"><B>award_count</B></TD></TR></TABLE>>];
+  faw [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="#E8EEF4"><TR><TD BGCOLOR="#1F4E79" ALIGN="LEFT"><FONT COLOR="white"><B>fact_award_works</B></FONT></TD></TR><TR><TD ALIGN="LEFT"><I>grain: award × work</I></TD></TR><TR><TD ALIGN="LEFT" PORT="award"><B>award_key</B>  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK · FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="work"><B>work_key</B>  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK · FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="funder">funder_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="topic">topic_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" PORT="date">publication_date_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">FK</FONT></TD></TR><TR><TD ALIGN="LEFT" BGCOLOR="white"><I>factless</I>: <B>funded_work_count</B> = 1</TD></TR></TABLE>>];
+  daw [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_award</B></TD></TR><TR><TD ALIGN="LEFT">award_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">award_title</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">award_description</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">funding_type</FONT></TD></TR></TABLE>>];
+  dfu [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_funder</B></TD></TR><TR><TD ALIGN="LEFT">funder_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">funder_name · country_code</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">is_global_south</FONT></TD></TR></TABLE>>];
+  dto [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_topic</B></TD></TR><TR><TD ALIGN="LEFT">topic_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">topic_name</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">subfield › field › domain</FONT></TD></TR></TABLE>>];
+  dda [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_date</B></TD></TR><TR><TD ALIGN="LEFT">date_key (YYYYMMDD)  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">year · quarter · month</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">us_fiscal_year</FONT></TD></TR></TABLE>>];
+  din [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_institution</B></TD></TR><TR><TD ALIGN="LEFT">institution_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">institution_name</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">country_code · type</FONT></TD></TR></TABLE>>];
+  dwo [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_work</B></TD></TR><TR><TD ALIGN="LEFT">work_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">title · abstract_text</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">publication_year</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">cited_by_count</FONT></TD></TR></TABLE>>];
+  brg [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white" STYLE="dashed"><TR><TD BGCOLOR="#EEF1F4" ALIGN="LEFT" PORT="pk"><B>brg_work_author</B></TD></TR><TR><TD ALIGN="LEFT">work_key + author_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">author_position</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">is_corresponding</FONT></TD></TR></TABLE>>];
+  dau [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" COLOR="#1F4E79" BGCOLOR="white"><TR><TD BGCOLOR="#D5DFEA" ALIGN="LEFT" PORT="pk"><B>dim_author</B></TD></TR><TR><TD ALIGN="LEFT">author_key  <FONT COLOR="#1F4E79" POINT-SIZE="10">PK</FONT></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#44546A">author_name · orcid</FONT></TD></TR></TABLE>>];
+  { rank=same; fa; din; }
+  { rank=same; daw; dfu; dto; dda; }
+  { rank=same; dwo; brg; dau; }
+  fa -> din [style=invis];
+  daw -> dfu -> dto -> dda [style=invis];
+  dwo -> brg -> dau [style=invis];
+  fa:pk:e -> daw:pk:w [arrowhead=tee, arrowtail=crow];
+  fa:funder:e -> dfu:pk:w [arrowhead=tee, arrowtail=crow];
+  fa:topic:e -> dto:pk:w [arrowhead=tee, arrowtail=crow];
+  fa:dates:e -> dda:pk:w [arrowhead=tee, arrowtail=crow];
+  fa:inst:w -> din:pk:w [arrowhead=tee, arrowtail=crow, constraint=false];
+  daw:pk:e -> faw:award:w [arrowhead=crow, arrowtail=tee];
+  dfu:pk:e -> faw:funder:w [arrowhead=crow, arrowtail=tee];
+  dto:pk:e -> faw:topic:w [arrowhead=crow, arrowtail=tee];
+  dda:pk:e -> faw:date:w [arrowhead=crow, arrowtail=tee];
+  faw:work:e -> dwo:pk:w [arrowhead=tee, arrowtail=crow];
+  dwo:s -> brg:n [arrowhead=crow, arrowtail=tee, constraint=false];
+  dau:n -> brg:s [arrowhead=crow, arrowtail=tee, constraint=false];
+}

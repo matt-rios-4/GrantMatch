@@ -1,9 +1,9 @@
 # Diagramas del PSet 2
 
-| Diagrama | Imagen | Fuente (TikZ) |
+| Diagrama | Imagen | Fuente (Graphviz) |
 |---|---|---|
-| Arquitectura implementada (infraestructura y flujo de datos) | [`arquitectura.png`](arquitectura.png) | [`arquitectura.tex`](arquitectura.tex) |
-| Modelo dimensional de la capa GOLD (star schema) | [`star_schema.png`](star_schema.png) | [`star_schema.tex`](star_schema.tex) |
+| Arquitectura implementada (infraestructura y flujo de datos) | [`arquitectura.png`](arquitectura.png) | [`arquitectura.dot`](arquitectura.dot) |
+| Modelo dimensional de la capa GOLD (star schema) | [`star_schema.png`](star_schema.png) | [`star_schema.dot`](star_schema.dot) |
 
 ![Arquitectura](arquitectura.png)
 
@@ -11,19 +11,15 @@
 
 ## Editar y regenerar
 
-Los `.tex` son fragmentos `tikzpicture` que se incluyen con `\input{...}`. Necesitan:
-- las librerías `positioning`, `arrows.meta`, `fit` y `backgrounds`;
-- tres colores: `acento` `#1F4E79`, `gris` `#555555` y `filaclara` `#F2F5F8`.
+Los `.dot` se dibujan con [Graphviz](https://graphviz.org/) y la fuente Liberation Sans. Desde esta carpeta,
+sin instalar nada (solo Docker):
 
-Plantilla mínima:
-
-```latex
-\documentclass{article}
-\usepackage{xcolor,tikz}
-\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,shapes.geometric}
-\definecolor{acento}{HTML}{1F4E79}\definecolor{gris}{HTML}{555555}\definecolor{filaclara}{HTML}{F2F5F8}
-\pagestyle{empty}
-\begin{document}\noindent\input{arquitectura.tex}\end{document}
+```bash
+docker run --rm -v "$PWD":/data -w /data alpine:3.20 sh -c \
+  'apk add -q graphviz font-liberation font-dejavu &&
+   for d in arquitectura star_schema; do dot -Tpng -Gdpi=220 $d.dot -o $d.png; done'
 ```
 
-Son los mismos diagramas del memo técnico (Figuras 1 y 2).
+Con Graphviz instalado basta `dot -Tpng -Gdpi=220 arquitectura.dot -o arquitectura.png`.
+
+Son los mismos diagramas del memo técnico (Figuras 1 y 2); el memo usa una versión PDF vectorial.
