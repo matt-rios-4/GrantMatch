@@ -9,7 +9,7 @@ Base `PSET2_DB`, esquema `BRONZE`. Las cuatro tablas deben existir aunque estén
 | Tabla | Carpeta de origen en S3 | Volumen aproximado |
 |---|---|---|
 | `RAW_OPENALEX_AWARDS` | `s3://openalex/data/parquet/awards/` | ~17 M de awards |
-| `RAW_OPENALEX_FUNDERS` | `s3://openalex/data/parquet/funders/` | ~30 mil |
+| `RAW_OPENALEX_FUNDERS` | `s3://openalex/data/parquet/funders/` | ~46 mil |
 | `RAW_OPENALEX_TOPICS` | `s3://openalex/data/parquet/topics/` | 4.516 |
 | `RAW_OPENALEX_WORKS` | `s3://openalex/data/parquet/works/` | subconjunto de particiones (ver costo) |
 

@@ -39,7 +39,7 @@ Las cuatro tablas `BRONZE.RAW_OPENALEX_{AWARDS,WORKS,FUNDERS,TOPICS}` deben exis
 | gold | `dim_award`, `dim_work`, `dim_author`, `dim_institution` | una entidad | incremental · merge |
 | gold | `dim_funder`, `dim_topic`, `dim_date` | una entidad / un día | table |
 
-**Por qué no todo es append.** Append se usa donde el grain es un evento inmutable: una versión de un award o de un work. En las tablas de estado actual, append duplicaría cada registro que cambia, así que esas usan merge o delete+insert. Ambas estrategias son incrementales y solo procesan lo que llegó en la última carga (filtro `_loaded_at > max(_loaded_at)`). La justificación completa está en el encabezado de cada `.sql` y en [docs/memo_secciones_3_4.md](docs/memo_secciones_3_4.md).
+**Por qué no todo es append.** Append se usa donde el grain es un evento inmutable: una versión de un award o de un work. En las tablas de estado actual, append duplicaría cada registro que cambia, así que esas usan merge o delete+insert. Ambas estrategias son incrementales y solo procesan lo que llegó en la última carga (filtro `_loaded_at > max(_loaded_at)`). La justificación completa está en el encabezado de cada `.sql`.
 
 ## Estructura
 

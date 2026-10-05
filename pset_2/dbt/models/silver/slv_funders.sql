@@ -1,7 +1,7 @@
 {#
     SILVER · slv_funders
     GRAIN: una fila por funder (versión más reciente).
-    MATERIALIZACIÓN: table. Excepción justificada al append: es un catálogo pequeño (~30 mil filas)
+    MATERIALIZACIÓN: table. Excepción justificada al append: es un catálogo pequeño (~46 mil filas)
     y mutable (sus conteos de awards y works cambian en cada snapshot). Reconstruirlo cuesta
     segundos y garantiza una sola fila por funder sin lógica incremental.
 

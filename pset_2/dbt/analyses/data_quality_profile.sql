@@ -2,7 +2,7 @@
 -- Perfil de calidad de datos sobre BRONZE (antes de limpiar).
 -- Produce la evidencia numérica de la Sección 3 del memo: cada fila es un problema con su
 -- conteo y porcentaje. Los IDs (A01, W04, ...) son los que citan los comentarios de los modelos
--- Silver y la tabla de docs/memo_secciones_3_4.md.
+-- Silver y el Anexo A del memo técnico.
 --
 -- Cómo correrlo:
 --   docker compose exec dbt dbt compile --select data_quality_profile
