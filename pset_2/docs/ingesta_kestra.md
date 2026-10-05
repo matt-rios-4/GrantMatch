@@ -1,197 +1,75 @@
-# Ingesta de OpenAlex a Snowflake BRONZE con Kestra
+# Ingesta con Kestra (Rol 1)
 
-## Alcance y estado
+Flow: [`kestra/flows/01_ingest_openalex_bronze.yml`](../kestra/flows/01_ingest_openalex_bronze.yml), namespace `pset2`, id `ingest_openalex_bronze`.
 
-Flujo de datos: OpenAlex S3 → Kestra → Snowflake `PSET2_DB.BRONZE` → dbt
-SILVER/GOLD → Spark OBT. Este documento cubre la ingesta Bronze.
+```
+S3 público de OpenAlex ──COPY INTO──▶ BRONZE.RAW_OPENALEX_* ──▶ dbt build (SILVER, GOLD) ──▶ Spark (OBT)
+   (Parquet, sin credenciales)          (registro original en RAW)     contenedor pset2-dbt          pset2-spark-master
+```
 
-Objetos conocidos:
+## Fuente y granularidad
 
-- Stage authors: `PSET2_DB.BRONZE.OPENALEX_PARQUET_STAGE`.
-- Stage works: `PSET2_DB.BRONZE.OPENALEX_WORKS_STAGE`.
-- File format: `PSET2_DB.BRONZE.OPENALEX_PARQUET_FORMAT`.
-- Tabla authors: `PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS`.
-- En el preflight actual (2026-10-04), authors tiene 104,067 filas de un solo
-  archivo; `LIST` reporta 503 Parquet, por lo que 502 no están en
-  `_SOURCE_FILE`.
-- El contexto de sesión verificado fue cuenta `CE74715`, usuario
-  `MAATEONICOLAS`, rol `PSET2_ROLE`, warehouse `PSET2_WH` y base `PSET2_DB`.
-- El stage WORKS apunta a `s3://openalex/data/works/`; el `LIST` actual no
-  devuelve objetos y `RAW_OPENALEX_WORKS` no existe.
-- El resultado vivo de 104,067 filas contradice un conteo previo reportado de
-  aproximadamente 7,166,142; se debe usar el resultado del preflight y revisar
-  la conexión/estado anterior antes de aprobar una carga completa.
+| Entidad | Ruta en S3 | Granularidad | Qué se carga |
+|---|---|---|---|
+| `topics` | `s3://openalex/data/parquet/topics/` | Catálogo (4 516) | Completo |
+| `funders` | `…/funders/` | Catálogo (~46 mil) | Completo |
+| `awards` | `…/awards/` | Partición diaria `updated_date=AAAA-MM-DD`, ~5 GB en total | Completo |
+| `works` | `…/works/` | Partición diaria, **~136 GB por día** | Una partición por corrida, como máximo `works_files_per_day` archivos (default 2, ~1.8 GB) |
 
-La API local de Kestra debe estar accesible y autenticada para leer los
-resultados del flow `openalex_ingestion_preflight`. No ejecutar el lote si no se
-ha recuperado una lista vigente de archivos, historial de carga y conteos.
+Cada fila de Bronze es un registro de un archivo Parquet. Guarda el registro original en `RAW` (VARIANT) y además `_SOURCE_FILE`, `_SOURCE_ROW_NUMBER` y `_LOADED_AT`. Es el esquema del [contrato con dbt](../dbt/docs/CONTRATO_BRONZE.md).
 
-## Flows
+## Proceso de carga
 
-Todos los flows son manuales, están en namespace `pset2` y reciben credenciales
-desde `ENV_SNOWFLAKE_*` declaradas en `docker-compose.yml`; ningún secreto va en
-el repositorio.
+1. **`works_partition`** calcula qué partición de works toca: `partition_date`, o bien la fecha del trigger menos `works_lag_days`.
+2. **`setup_stage`** y **`setup_tables`** crean, si no existen, el stage externo sobre el bucket público y las 4 tablas del contrato. Son idempotentes, así que un clon nuevo del repo corre sin pasos manuales en Snowflake, salvo `docs/snowflake_setup.sql`.
+3. **`load_catalogs`** hace un `COPY INTO` de topics, funders y awards con `PATTERN = '.*[.]parquet'`. La primera corrida carga todo; las siguientes solo agregan archivos nuevos, porque Snowflake guarda qué archivos ya cargó cada tabla y no los repite (`FORCE` queda en su default, `FALSE`).
+4. **`load_works`** hace un `COPY INTO` de works con `PATTERN = '.*updated_date=<fecha>/part_000[0-N][.]parquet'`.
+5. **`load_summary`** registra las filas nuevas y totales por tabla.
+6. **`transformations`** ejecuta `dbt build` y después el job de la OBT (`run_obt.sh`) con `docker exec` sobre los contenedores del compose. Se puede apagar con `run_transformations = false`.
 
-| Flow ID | Uso |
-|---|---|
-| `smoke_test_snowflake` | Comprobar conectividad con Snowflake. |
-| `copy_single_openalex_author_file` | Prueba controlada de un archivo authors exacto. |
-| `openalex_ingestion_preflight` | Solo lectura: objetos, definición de stages, LIST, conteos, archivos cargados, COPY_HISTORY y forma de PAYLOAD. Consulta COPY_HISTORY y conteo de WORKS solo si la tabla existe. |
-| `ingest_openalex_authors_batch` | COPY por lista explícita de archivos authors, máximo 1000 por ejecución. |
-| `ingest_openalex_works_batch` | Crea `RAW_OPENALEX_WORKS` si falta y copia una lista explícita, máximo 1000 por ejecución. |
+`ON_ERROR = ABORT_STATEMENT`: si un archivo falla, el `COPY` completo se revierte y no deja cargas parciales.
 
-Los flujos de ingesta especifican `FILES`, `FORCE = FALSE` y
-`ON_ERROR = 'ABORT_STATEMENT'`; preservan `METADATA$FILENAME`,
-`METADATA$START_SCAN_TIME` y el ID de ejecución de Kestra. No contienen
-comodines, triggers ni operaciones de borrado. `FORCE = FALSE` usa el historial
-de Snowflake para omitir archivos cargados recientemente; para protegerse de
-cargas antiguas o metadatos expirados, compara siempre la lista contra
-`_SOURCE_FILE` antes de armar el lote. Además, cada flow valida contra su tabla
-Bronze que ninguna clave ya exista en `_SOURCE_FILE`, que no haya claves
-repetidas en la solicitud y que el lote tenga como máximo 1000 elementos; si
-alguna comprobación falla, se detiene antes del COPY.
+## Frecuencia
 
-## Diagnóstico de solo lectura
+Trigger `daily` (`Schedule`, `0 6 * * *`, 06:00 UTC), por dos razones:
+- OpenAlex publica particiones diarias.
+- El caso de uso (recomendar financiamiento) tolera días de latencia. Ver memo §6.
 
-Ejecuta `openalex_ingestion_preflight` desde la UI de Kestra en el namespace
-`pset2`. Confirma que terminó en `SUCCESS` y revisa sus salidas. Las siguientes
-consultas también son de solo lectura:
+Además, OpenAlex publica su snapshot con unos 11 días de retraso (al 4-oct-2026, la última partición era la del 23-sep). Por eso works se carga con un desfase de 14 días (`works_lag_days`); con un desfase menor, la mayoría de las corridas no encontraría archivos.
+
+## Errores y reintentos
+
+- **Reintentos:** todas las tareas de Snowflake heredan de `pluginDefaults` un retry exponencial: 30 s, 60 s, 120 s…, con un tope de 10 min entre intentos (`maxInterval`) y 5 intentos en total. Cubre fallas transitorias de red, de Snowflake (429/503) o de un warehouse que se está reanudando. Está verificado: con una conexión inválida la tarea hace 3 intentos con espera creciente y después falla.
+- **Jitter:** el retry exponencial de Kestra (1.3.37) no tiene parámetro de jitter (rechaza el campo `jitter`). El jitter que pide el diseño del equipo lo aporta el driver JDBC de Snowflake, que reintenta sus llamadas HTTP con backoff de jitter decorrelacionado (`DecorrelatedJitterBackoff`). Kestra agrega encima el backoff exponencial a nivel de tarea.
+- **Bloque `errors`:** cuando una tarea agota sus intentos, deja un log de nivel ERROR con la ejecución y la partición. Ahí se puede conectar una alerta, por ejemplo un webhook de Slack.
+- **Idempotencia:** reintentar o re-ejecutar no duplica datos, porque `COPY INTO` salta archivos ya cargados. Si un archivo se recargara (por ejemplo, porque OpenAlex lo reescribió), Silver descarta la copia exacta (métrica A02 del perfil de calidad).
+
+## Backfill
+
+- **Por rango de fechas:** en la UI, Flows → `ingest_openalex_bronze` → Triggers → `daily` → **Backfill**, y elige el rango. Kestra crea una ejecución por fecha y cada una carga su partición de works (fecha − `works_lag_days`).
+- **Una partición puntual:** Execute con `partition_date = AAAA-MM-DD` (y `works_lag_days` se ignora). Sirve también para recuperar una fecha en la que la partición todavía no estaba publicada (`load_summary` muestra 0 filas nuevas en WORKS).
+- **Catálogos:** no necesitan backfill: cada corrida carga todos los archivos que todavía no están en Bronze.
+
+## Verificación rápida en Snowflake
 
 ```sql
-SHOW STAGES IN SCHEMA PSET2_DB.BRONZE;
-SHOW FILE FORMATS IN SCHEMA PSET2_DB.BRONZE;
-SHOW TABLES IN SCHEMA PSET2_DB.BRONZE;
-DESC STAGE PSET2_DB.BRONZE.OPENALEX_PARQUET_STAGE;
-DESC STAGE PSET2_DB.BRONZE.OPENALEX_WORKS_STAGE;
+-- Filas y archivos por tabla
+SELECT 'AWARDS' t, COUNT(*) filas, COUNT(DISTINCT _SOURCE_FILE) archivos FROM PSET2_DB.BRONZE.RAW_OPENALEX_AWARDS
+UNION ALL SELECT 'WORKS', COUNT(*), COUNT(DISTINCT _SOURCE_FILE) FROM PSET2_DB.BRONZE.RAW_OPENALEX_WORKS;
 
-LIST @PSET2_DB.BRONZE.OPENALEX_PARQUET_STAGE/authors/ PATTERN = '.*[.]parquet$';
-LIST @PSET2_DB.BRONZE.OPENALEX_WORKS_STAGE PATTERN = '.*[.]parquet$';
-LIST @PSET2_DB.BRONZE.OPENALEX_WORKS_STAGE;
-
-SELECT COUNT(*) AS TOTAL_FILAS,
-       COUNT(DISTINCT _SOURCE_FILE) AS ARCHIVOS_DISTINTOS,
-       COUNT(DISTINCT _RUN_ID) AS EJECUCIONES
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS;
-
-SELECT _SOURCE_FILE, COUNT(*) AS FILAS,
-       COUNT(DISTINCT _RUN_ID) AS EJECUCIONES,
-       MIN(_LOADED_AT) AS PRIMERA_CARGA,
-       MAX(_LOADED_AT) AS ULTIMA_CARGA
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS
-GROUP BY _SOURCE_FILE
-ORDER BY ULTIMA_CARGA DESC;
-
-SELECT FILE_NAME, STATUS, LAST_LOAD_TIME, ROW_COUNT, ROW_PARSED,
-       FIRST_ERROR_MESSAGE
+-- Historial de cargas de una tabla (últimos 14 días)
+SELECT file_name, status, row_count, last_load_time
 FROM TABLE(PSET2_DB.INFORMATION_SCHEMA.COPY_HISTORY(
-  TABLE_NAME => 'PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS',
-  START_TIME => DATEADD('day', -14, CURRENT_TIMESTAMP())
-))
-ORDER BY LAST_LOAD_TIME DESC;
-
-SELECT TYPEOF(PAYLOAD) AS TIPO,
-       ARRAY_TO_STRING(OBJECT_KEYS(PAYLOAD), ',') AS CLAVES,
-       PAYLOAD:"id"::VARCHAR AS ID_EJEMPLO
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS
-LIMIT 1;
-
-SELECT COUNT(*) AS TABLE_COUNT
-FROM PSET2_DB.INFORMATION_SCHEMA.TABLES
-WHERE TABLE_SCHEMA = 'BRONZE'
-  AND TABLE_NAME = 'RAW_OPENALEX_WORKS'
-  AND TABLE_TYPE = 'BASE TABLE';
+  TABLE_NAME => 'PSET2_DB.BRONZE.RAW_OPENALEX_WORKS',
+  START_TIME => DATEADD('day', -14, CURRENT_TIMESTAMP())))
+ORDER BY last_load_time DESC;
 ```
 
-`COPY_HISTORY` de `INFORMATION_SCHEMA` cubre los últimos 14 días. La tabla
-Bronze con `_SOURCE_FILE` es la referencia para cotejar archivos cargados fuera
-de esa ventana. Para comparar, usa la clave relativa del stage que corresponda
-a `METADATA$FILENAME`; elimina de `LIST.name` el prefijo URL del stage si está
-presente y no cambies el resto de la ruta.
+## Evidencia (cuenta del equipo, 4-oct-2026, warehouse X-Small)
 
-## Preparar el lote, sin cargar
-
-1. Ejecuta preflight y guarda las rutas exactas Parquet reportadas por `LIST`
-   para ambos stages. El stage works se debe listar antes de decidir cualquier
-   clave: no asumas su prefijo ni su estructura.
-2. Compara cada clave de `LIST` con `_SOURCE_FILE` de su tabla Bronze. Excluye
-   toda clave ya presente; compara el archivo de prueba authors como ya cargado.
-3. Cuenta los archivos restantes y las filas existentes por archivo. Prepara
-   lotes de hasta 1000 claves, separadas por coma y sin espacios. No uses
-   carpetas, `PATTERN` de carpeta ni rutas construidas por conjetura.
-4. Antes de la ingesta completa, informa el conteo de candidatos, archivos ya
-   cargados, clave y filas del archivo de prueba y cualquier diferencia entre
-   `LIST`, `_SOURCE_FILE` y `COPY_HISTORY`. Espera aprobación explícita.
-
-No volver a ejecutar un COPY sobre toda la carpeta authors. Una carga masiva
-requiere autorización después de mostrar el plan y el impacto esperado.
-
-## Ejecutar una prueba controlada
-
-Solo después de aprobación, abre `copy_single_openalex_author_file` en namespace
-`pset2` y proporciona en `s3_file_key` una única ruta authors confirmada por
-`LIST`, relativa a la raíz del stage (por ejemplo,
-`authors/updated_date=2026-04-08/part_0000.parquet`). El flow lista el archivo en
-`FILES`, nunca usa un patrón. Revisa la salida del COPY antes de continuar.
-
-## Ejecutar lotes completos
-
-Solo después de aprobación explícita del plan, inicia manualmente el flow
-correspondiente desde Kestra → namespace `pset2` → **Execute**:
-
-- Authors: `ingest_openalex_authors_batch`; pega en `file_keys` hasta 1000
-  claves exactas no cargadas, relativas a `OPENALEX_PARQUET_STAGE`, separadas
-  por comas. Cada clave debe comenzar con `authors/`.
-- Works: `ingest_openalex_works_batch`; pega en `file_keys` hasta 1000 claves
-  exactas no cargadas, relativas a `OPENALEX_WORKS_STAGE`, separadas por comas.
-  El prefijo se deriva de `LIST`, no se presupone.
-
-La ejecución equivalente desde PowerShell usa la API local de Kestra. Define las
-claves a partir de `LIST` y conserva las credenciales únicamente en variables
-locales; no pegues claves ya cargadas. Requiere `curl.exe` y solo debe ejecutarse
-después de aprobar el plan:
-
-```powershell
-$authorsFileKeys = @('authors/<clave exacta no cargada 1>.parquet', 'authors/<clave exacta no cargada 2>.parquet')
-curl.exe --fail-with-body --user "$($env:KESTRA_USER):$($env:KESTRA_PASSWORD)" `
-  --form "file_keys=$($authorsFileKeys -join ',')" `
-  'http://localhost:8080/api/v1/main/executions/pset2/ingest_openalex_authors_batch?wait=true'
-
-$worksFileKeys = @('<clave exacta no cargada 1>.parquet', '<clave exacta no cargada 2>.parquet')
-curl.exe --fail-with-body --user "$($env:KESTRA_USER):$($env:KESTRA_PASSWORD)" `
-  --form "file_keys=$($worksFileKeys -join ',')" `
-  'http://localhost:8080/api/v1/main/executions/pset2/ingest_openalex_works_batch?wait=true'
-```
-
-Reemplaza todos los marcadores por rutas reales copiadas de `LIST`; no uses el
-ejemplo de autores ya cargado como candidato. La respuesta debe terminar en
-`SUCCESS`; conserva los resultados por archivo de la tarea COPY.
-
-Para más de 1000 claves, divide el conjunto aprobado en lotes disjuntos. Guarda
-la salida `rows_loaded`, `rows_parsed`, `status` y `file` de cada ejecución y
-valida el conteo de archivos/filas al terminar cada lote. Una reejecución solo
-debe usar los archivos todavía ausentes según `_SOURCE_FILE` y `COPY_HISTORY`.
-
-## Validación posterior
-
-```sql
-SELECT COUNT(*) AS TOTAL_FILAS,
-       COUNT(DISTINCT _SOURCE_FILE) AS ARCHIVOS_DISTINTOS,
-       COUNT(DISTINCT _RUN_ID) AS EJECUCIONES
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS;
-
-SELECT _RUN_ID, _SOURCE_FILE, COUNT(*) AS FILAS,
-       MIN(_LOADED_AT) AS PRIMERA_CARGA,
-       MAX(_LOADED_AT) AS ULTIMA_CARGA
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_AUTHORS
-GROUP BY _RUN_ID, _SOURCE_FILE
-ORDER BY ULTIMA_CARGA DESC;
-
-SELECT COUNT(*) AS TOTAL_FILAS,
-       COUNT(DISTINCT _SOURCE_FILE) AS ARCHIVOS_DISTINTOS,
-       COUNT(DISTINCT _RUN_ID) AS EJECUCIONES
-FROM PSET2_DB.BRONZE.RAW_OPENALEX_WORKS;
-```
-
-No se requiere modificar dbt/Spark para esta ingesta. El siguiente paso tras
-validar Bronze es coordinar con el responsable de dbt la selección de modelos
-SILVER sobre `RAW_OPENALEX_AUTHORS` y `RAW_OPENALEX_WORKS`.
+| Prueba | Resultado |
+|---|---|
+| Primera corrida completa (`partition_date = 2026-09-23`, 2 archivos de works) | `SUCCESS`. Cargas: topics 4 516 filas (3 s), funders 45 661 (5 s), awards 17 139 262 (1 min 34 s), works 558 403 (1 min 18 s). Después, `dbt build` PASS=127 y OBT con 313 264 filas = `FACT_AWARD_WORKS` |
+| Re-ejecución de la misma partición | 0 filas nuevas en las 4 tablas, en 15 s: `COPY INTO` no recarga archivos |
+| Backfill de un día (trigger `daily`, 3-oct) | `trigger.date = 2026-10-03`. Carga la partición de works 2026-09-19: 669 102 filas nuevas en 1 min 40 s. El trigger retoma su calendario al terminar |
+| Reintentos | Con una conexión inválida, la tarea hace 3 intentos con espera exponencial y después corre el bloque `errors` |
