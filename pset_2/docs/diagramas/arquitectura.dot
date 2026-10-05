@@ -1,0 +1,67 @@
+// Arquitectura del pipeline del PSet 2 (Subvenciones con Ruta).
+// Render: dot -Tpdf arquitectura.dot -o arquitectura.pdf  (y -Tpng -Gdpi=220 para el README)
+digraph arquitectura {
+  graph [rankdir=TB, newrank=true, nodesep=0.22, ranksep=0.5, fontname="Liberation Sans",
+         fontsize=12.5, fontcolor="#44546A", bgcolor="white", pad=0.15, compound=true];
+  node  [shape=box, style="rounded,filled", fillcolor="white", color="#1F4E79", penwidth=1.1,
+         fontname="Liberation Sans", fontsize=13, fontcolor="#1A1A1A", margin="0.12,0.06"];
+  edge  [color="#1F4E79", fontname="Liberation Sans", fontsize=12, fontcolor="#1A1A1A",
+         arrowsize=0.7];
+
+  // ------------------------------------------------------------------ fuente
+  subgraph cluster_src {
+    label=<<B>OpenAlex</B> · bucket S3 público>; labeljust=l;
+    style="rounded,filled"; fillcolor="#F7F9FB"; color="#8A9BB0";
+    MAN [label=<<B>manifest.json</B><BR/>fecha del snapshot>];
+    S3  [label=<<B>s3://openalex/data/parquet/</B><BR/>awards · funders · topics<BR/>works por <I>updated_date</I>>];
+  }
+
+  // ------------------------------------------------------------------ Snowflake
+  subgraph cluster_sf {
+    label=<<B>Snowflake</B> · PSET2_DB · PSET2_WH (X-Small)>; labeljust=r;
+    style="rounded,filled"; fillcolor="#F7F9FB"; color="#8A9BB0";
+    node [shape=cylinder, fillcolor="#E8EEF4", margin="0.10,0.09"];
+    B [label=<<B>BRONZE</B><BR/>RAW_OPENALEX_*<BR/><FONT POINT-SIZE="11.5">VARIANT original</FONT>>];
+    S [label=<<B>SILVER</B><BR/>slv_*<BR/><FONT POINT-SIZE="11.5">historial + actual</FONT>>];
+    G [label=<<B>GOLD</B><BR/>star schema<BR/><FONT POINT-SIZE="11.5">2 hechos · 7 dims</FONT>>];
+    O [label=<<B>OBT</B><BR/>OBT_AWARD_WORK<BR/><FONT POINT-SIZE="11.5">+ validación</FONT>>];
+  }
+
+  // ------------------------------------------------------------------ docker-compose
+  subgraph cluster_dc {
+    label=<<B>docker-compose</B> (local)>; labeljust=l; labelloc=b;
+    style="rounded,filled"; fillcolor="#F7F9FB"; color="#8A9BB0";
+    KD  [label=<<B>kestra-deploy</B><BR/>importa flows>];
+    K   [label=<<B>Kestra 1.3.37</B> <FONT POINT-SIZE="11.5">(+ Postgres)</FONT><BR/>ingest_openalex_bronze<BR/><FONT POINT-SIZE="11.5">diario · retries · backfill</FONT>>];
+    subgraph cluster_tr {
+      label=<transformaciones>; labeljust=l; labelloc=b; fontsize=11.5;
+      style="rounded,dashed"; color="#8A9BB0";
+      DBT [label=<<B>dbt Core 1.9</B><BR/>127 nodos · 109 tests>];
+      SP  [label=<<B>Spark 3.5</B><BR/>master + worker>];
+    }
+  }
+
+  { rank=same; MAN; S3; }
+  { rank=same; B; S; G; O; }
+  { rank=same; KD; K; DBT; SP; }
+
+  // orden horizontal dentro de cada fila
+  MAN -> S3 [style=invis];
+  KD -> K -> DBT -> SP [style=invis];
+
+  // ------------------------------------------------------------------ datos
+  edge [penwidth=2.2, arrowsize=0.8];
+  S3 -> B [label=<  ① COPY INTO>];
+  B -> S -> G -> O;
+
+  // ------------------------------------------------------------------ orquestación (flechas hacia arriba)
+  edge [penwidth=1.0, style=dashed, color="#5B6B7F", arrowsize=0.6];
+  MAN -> K  [label=<fecha>, constraint=false];
+  KD  -> K  [constraint=false];
+  B   -> K  [dir=back, label=<SQL>];
+  S   -> DBT [dir=back, label=<② dbt build>];
+  G   -> DBT [dir=back];
+  K   -> DBT [lhead=cluster_tr, label=<docker exec  >];
+  O   -> SP  [dir=both, arrowtail=normal, label=<③ conector<BR/>Snowflake>];
+  DBT -> SP  [style=solid, constraint=false, label=<luego>];
+}

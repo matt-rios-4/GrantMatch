@@ -10,6 +10,10 @@ Fuente (S3: OpenAlex / NSF)
    → Snowflake OBT
 ```
 
+![Arquitectura del pipeline](docs/diagramas/arquitectura.png)
+
+Diagramas de arquitectura y del star schema (imagen + fuente Graphviz): [docs/diagramas/](docs/diagramas/).
+
 ## Estructura
 ```
 pset_2/
