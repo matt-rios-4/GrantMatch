@@ -21,6 +21,7 @@ with aw as (
         try_to_date(raw:start_date::varchar)                    as start_date,
         try_to_date(raw:end_date::varchar)                      as end_date,
         raw:start_year                                          as start_year,
+        try_cast(raw:start_year::varchar as integer)            as start_year_int,
         {{ oa_id("raw:funder:id") }}                            as funder_id,
         {{ oa_id("raw:primary_topic:id") }}                     as primary_topic_id,
         coalesce(try_cast(raw:funded_outputs_count::varchar as integer),
@@ -42,6 +43,7 @@ wk as (
         coalesce({{ clean_text("raw:title") }}, {{ clean_text("raw:display_name") }}) as title,
         raw:abstract_inverted_index                             as abstract_idx,
         try_cast(raw:publication_year::varchar as integer)      as publication_year,
+        try_to_date(raw:publication_date::varchar)              as publication_date,
         coalesce(try_cast(raw:is_retracted::varchar as boolean), false) as is_retracted,
         raw:authorships                                         as authorships,
         raw:awards                                              as awards
@@ -105,6 +107,17 @@ metrics as (
     union all
     select 'A14', 'awards', 'Completitud', 'Sin primary_topic (no se puede filtrar por dominio)',
            count_if(primary_topic_id is null), count(*) from aw
+    union all
+    -- Precisión: el dato existe, pero con menos detalle del que el análisis necesita. Silver
+    -- imputa el 1 de enero con la bandera is_start_date_from_year (misma regla de rango).
+    select 'A15', 'awards', 'Precisión', 'Fecha de inicio solo con año (sin mes ni día)',
+           count_if(start_date is null and start_year_int between 1900 and 2100),
+           count_if(start_date is not null or start_year_int between 1900 and 2100) from aw
+    union all
+    -- USD 1.000 M es más que el presupuesto anual de muchos financiadores: un award por encima
+    -- de ese monto casi seguro es un error de unidad o de carga en la fuente.
+    select 'A16', 'awards', 'Precisión', 'Monto en USD inverosímil (>= USD 1.000 M en un award)',
+           count_if(currency = 'USD' and amount >= 1e9), count_if(currency = 'USD' and amount > 0) from aw
 
     -- ---------------------------------------------------------------- WORKS
     union all
@@ -139,6 +152,12 @@ metrics as (
     where wa.award_id is not null
     union all
     select 'W10', 'works', 'Validez', 'Publicaciones retractadas', count_if(is_retracted), count(*) from wk
+    union all
+    -- Precisión: si las fechas fueran exactas, el 1 de enero tendría ~1/365 (0,27 %) de los works:
+    -- el exceso son works con solo el año, que la fuente completa con el 1 de enero.
+    select 'W11', 'works', 'Precisión', 'Fecha de publicación el 1 de enero (en realidad, solo el año)',
+           count_if(month(publication_date) = 1 and day(publication_date) = 1),
+           count_if(publication_date is not null) from wk
 
     -- ---------------------------------------------------------------- FUNDERS / TOPICS
     union all

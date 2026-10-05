@@ -20,7 +20,7 @@
         - end_date < start_date (exacta o derivada del año) -> end_date = NULL y bandera
           has_inconsistent_dates (A08).
         - start_date ausente pero start_year presente -> 1 de enero de ese año, con bandera
-          is_start_date_from_year, para no perder la dimensión de tiempo.
+          is_start_date_from_year, para no perder la dimensión de tiempo (A15, precisión).
       Completitud
         - amount NULL se conserva como NULL (A05). No se imputa: los financiadores que no publican
           montos no lo hacen al azar (probable MNAR), e imputar con media inventaría dinero.
