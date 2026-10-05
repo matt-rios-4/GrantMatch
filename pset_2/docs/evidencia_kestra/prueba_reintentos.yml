@@ -1,0 +1,31 @@
+id: prueba_reintentos
+namespace: pset2.pruebas
+description: >-
+  Prueba de la política de reintentos del flow de ingesta (misma configuración de retry)
+  contra una tabla que no existe: la tarea falla, reintenta con espera exponencial y,
+  al agotar los 5 intentos, corre el bloque errors.
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.snowflake.Query
+    values:
+      url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&role={{ envs.snowflake_role }}"
+      username: "{{ envs.snowflake_user }}"
+      password: "{{ envs.snowflake_password }}"
+      retry:
+        type: exponential
+        interval: PT30S
+        delayFactor: 2.0
+        maxInterval: PT10M
+        maxAttempts: 5
+
+tasks:
+  - id: consulta_que_falla
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    sql: select count(*) from BRONZE.TABLA_QUE_NO_EXISTE
+    fetchType: FETCH_ONE
+
+errors:
+  - id: report_failure
+    type: io.kestra.plugin.core.log.Log
+    level: ERROR
+    message: "La tarea agotó sus 5 intentos con espera exponencial; corre el bloque errors."
