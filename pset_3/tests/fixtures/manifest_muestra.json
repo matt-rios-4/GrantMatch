@@ -1,0 +1,9 @@
+{
+  "tabla_origen": "OBT.OBT_AWARD_WORK",
+  "fecha_corte": "2026-10-23 14:58:29.260618",
+  "sha256": "721dbdb4d4b468fa81e21c72a321d3663b869553770dd9265dde87fbe95a5fa0",
+  "filas": 7700,
+  "positivos": 1540,
+  "publicaciones": 400,
+  "nota": "muestra de desarrollo con negativos al azar; no sirve para reportar métricas"
+}
