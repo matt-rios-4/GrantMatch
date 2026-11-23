@@ -140,3 +140,11 @@ desktop.ini
 # ENTREGABLES BINARIOS GRANDES (el memo final se sube aparte si pesa)
 # ============================================================
 # *.pdf   <- descomenta si NO quieren versionar PDFs
+
+# ============================================================
+# PSET 3 (excepciones: la muestra de desarrollo y el export de corridas sí se versionan)
+# ============================================================
+!pset_3/tests/fixtures/*.parquet
+!pset_3/docs/corridas.csv
+mlartifacts/
+mlruns/
