@@ -17,7 +17,7 @@ cp .env.example .env
 
 El PSet 2 terminó en `OBT.OBT_AWARD_WORK` en Snowflake (cuenta de prueba, ya vencida). La tabla se exportó completa a CSV antes de que venciera; ese snapshot es la fuente del PSet 3:
 
-- Bajar `obt_award_work_full.csv` (155 MB, [Drive del equipo](LINK_DRIVE)) a `pset_3/data/raw/`. No se versiona: pasa el límite de 100 MB de GitHub.
+- Bajar `obt_award_work_full.csv` (155 MB, [Drive del equipo](https://drive.google.com/drive/folders/1R5fdg2A-RmjSpoBZN5QAoK0HI69aw6cr)) a `pset_3/data/raw/`. No se versiona: pasa el límite de 100 MB de GitHub.
 - Comprobar que es el mismo snapshot: `shasum -a 256 data/raw/obt_award_work_full.csv` debe dar `ef2b43871376f294d3f15613890694c8017ba53f61d6ec00089cd3d0d4ac3052`.
 - `python -m src.datos` genera los pares con negativos, los abstracts de OpenAlex y los embeddings en `data/processed/` (ver ROLES).
 - Sin esos archivos, todo corre sobre `tests/fixtures/pares_muestra.parquet`, una muestra de 400 publicaciones con negativos al azar. Sirve para desarrollar, **no** para reportar métricas.
