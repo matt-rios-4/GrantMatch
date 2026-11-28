@@ -12,3 +12,8 @@ python-dotenv==1.0.1
 jupyter==1.1.1
 nbformat==5.10.4
 pytest==8.3.3
+# Rol 1 (Datos): embeddings all-MiniLM-L6-v2. En Linux, torch baja la versión con CUDA (~2.5 GB):
+# para CPU, pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu antes del resto.
+sentence-transformers==3.4.1
+transformers==4.49.0
+torch==2.6.0
